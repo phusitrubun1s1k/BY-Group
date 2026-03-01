@@ -75,7 +75,16 @@ export default function RegisterPage() {
         try {
             const supabase = createClient();
             const { data, error } = await supabase.auth.signUp({ email: form.email, password: form.password });
-            if (error) { toast.error(error.message); return; }
+            if (error) {
+                if (error.message === 'User already registered') {
+                    toast.error('อีเมลนี้ถูกใช้งานแล้ว');
+                } else if (error.message === 'Signup requires a valid password') {
+                    toast.error('รหัสผ่านไม่เป็นไปตามข้อกำหนด');
+                } else {
+                    toast.error(error.message);
+                }
+                return;
+            }
 
             if (data.user) {
                 await supabase.from('profiles').upsert({

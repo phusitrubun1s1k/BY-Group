@@ -21,7 +21,14 @@ export default function LoginPage() {
         try {
             const supabase = createClient();
             const { error } = await supabase.auth.signInWithPassword({ email, password });
-            if (error) { toast.error(error.message); return; }
+            if (error) {
+                if (error.message === 'Invalid login credentials') {
+                    toast.error('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+                } else {
+                    toast.error(error.message);
+                }
+                return;
+            }
             toast.success('เข้าสู่ระบบสำเร็จ');
             router.push('/dashboard');
             router.refresh();
