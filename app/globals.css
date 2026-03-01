@@ -1,26 +1,361 @@
 @import "tailwindcss";
 
+/* ============================================================
+   🏸 Badminton Group — Design System
+   Theme: White 70% / Black 20% / Orange 10%
+   Clean, minimal, professional. No glow or neon effects.
+   ============================================================ */
+
+@theme {
+  /* -- Whites (70% of the UI) -- */
+  --color-white: #ffffff;
+  --color-gray-50: #fafafa;
+  --color-gray-100: #f5f5f5;
+  --color-gray-200: #e5e5e5;
+  --color-gray-300: #d4d4d4;
+
+  /* -- Blacks (20% of the UI) -- */
+  --color-gray-500: #737373;
+  --color-gray-600: #525252;
+  --color-gray-700: #404040;
+  --color-gray-800: #262626;
+  --color-gray-900: #171717;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* -- Whites (70% of the UI) -- */
+  --white: #ffffff;
+  --gray-50: #fafafa;
+  --gray-100: #f5f5f5;
+  --gray-200: #e5e5e5;
+  --gray-300: #d4d4d4;
+
+  /* -- Blacks (20% of the UI) -- */
+  --gray-500: #737373;
+  --gray-600: #525252;
+  --gray-700: #404040;
+  --gray-800: #262626;
+  --gray-900: #171717;
+  --black: #0a0a0a;
+
+  /* -- Orange Accent (10% of the UI) -- */
+  --orange-400: #fb923c;
+  --orange-500: #f97316;
+  --orange-600: #ea580c;
+  --orange-700: #c2410c;
+
+  /* -- Semantic -- */
+  --background: var(--gray-50);
+  --foreground: var(--gray-900);
+  --muted: var(--gray-500);
+  --card-bg: var(--white);
+  --card-border: var(--gray-200);
+  --input-bg: var(--gray-100);
+  --input-border: var(--gray-300);
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* ============================================================
+   Base
+   ============================================================ */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    line-height: 1.6;
+    font-family: var(--font-outfit), var(--font-prompt), sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--gray-300);
+    border-radius: 3px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ============================================================
+   Components
+   ============================================================ */
+@layer components {
+
+  /* ---- Cards ---- */
+  .card {
+    background: var(--card-bg);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.03);
+    transition: all 0.2s ease;
+  }
+
+  .card:hover {
+    box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
+  }
+
+  .card-flat {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+  }
+
+  /* ---- Buttons ---- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    text-decoration: none;
+    line-height: 1.4;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--orange-500);
+    color: var(--white);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--orange-600);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: var(--gray-100);
+    color: var(--gray-700);
+    border: 1px solid var(--gray-200);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--gray-200);
+  }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--gray-700);
+    border: 1px solid var(--gray-300);
+  }
+
+  .btn-outline:hover:not(:disabled) {
+    background: var(--gray-50);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--gray-500);
+    padding: 8px 12px;
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--gray-100);
+    color: var(--gray-700);
+  }
+
+  .btn-sm {
+    padding: 6px 14px;
+    font-size: 13px;
+    border-radius: 8px;
+  }
+
+  /* ---- Form Controls ---- */
+  .form-group {
+    margin-bottom: 20px;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 6px;
+  }
+
+  .form-input {
+    width: 100%;
+    padding: 10px 14px;
+    padding-left: 40px;
+    background: var(--white);
+    border: 1px solid var(--gray-300);
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--foreground);
+    transition: border-color 0.15s ease;
+    outline: none;
+    font-family: inherit;
+  }
+
+  .form-input:focus {
+    border-color: var(--orange-500);
+  }
+
+  .form-input::placeholder {
+    color: var(--gray-500);
+  }
+
+  .form-input-plain {
+    padding-left: 14px;
+  }
+
+  .form-select {
+    width: 100%;
+    padding: 10px 16px;
+    padding-right: 40px;
+    background: var(--white);
+    border: 1px solid var(--gray-300);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray-700);
+    outline: none;
+    font-family: inherit;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23737373' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m7 10l5 5l5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  }
+
+  .form-select:hover {
+    border-color: var(--gray-400);
+    background-color: var(--gray-50);
+  }
+
+  .form-select:focus {
+    border-color: var(--orange-500);
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.1), 0 1px 2px rgba(0, 0, 0, 0.05);
+    background-color: var(--white);
+  }
+
+  /* ---- Badges ---- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .badge-success {
+    background: rgba(22, 163, 74, 0.08);
+    color: var(--success);
+  }
+
+  .badge-warning {
+    background: rgba(217, 119, 6, 0.08);
+    color: var(--warning);
+  }
+
+  .badge-danger {
+    background: rgba(220, 38, 38, 0.08);
+    color: var(--danger);
+  }
+
+  .badge-muted {
+    background: var(--gray-100);
+    color: var(--gray-500);
+  }
+
+  .badge-orange {
+    background: rgba(249, 115, 22, 0.08);
+    color: var(--orange-600);
+  }
+
+  /* ---- Stat Cards ---- */
+  .stat-card {
+    padding: 16px;
+    border-radius: 12px;
+    background: var(--gray-50);
+    border: 1px solid var(--gray-200);
+  }
+
+  /* ---- Spinner ---- */
+  .spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--gray-200);
+    border-top-color: var(--orange-500);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  /* ---- Animations ---- */
+  .animate-in {
+    animation: fadeIn 0.3s ease-out both;
+  }
+
+  /* ---- Responsive Container ---- */
+  .container-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+
+  @media (min-width: 640px) {
+    .container-page {
+      padding: 0 24px;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container-page {
+      padding: 0 32px;
+    }
+  }
+}
+
+/* ============================================================
+   Keyframes (must be outside @layer)
+   ============================================================ */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
