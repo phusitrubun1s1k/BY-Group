@@ -182,11 +182,22 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
     const toggleCheckIn = async (ep: EventPlayer) => {
         if (!eventId) return;
-        const supabase = createClient();
         const newStatus = !ep.is_checked_in;
+
+        // Optimistic update
+        setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, is_checked_in: newStatus } : p));
+
+        const supabase = createClient();
         const { error } = await supabase.from('event_players').update({ is_checked_in: newStatus }).eq('id', ep.id);
-        if (error) { toast.error('เกิดข้อผิดพลาดในการอัปเดตสถานะ'); return; }
-        loadData(eventId);
+
+        if (error) {
+            toast.error('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
+            // Rollback on error
+            setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, is_checked_in: !newStatus } : p));
+            return;
+        }
+        // No manual loadData call needed as the real-time subscription will trigger it if necessary,
+        // and we've already updated the state optimistically.
     };
 
     const addShuttlecock = (matchId: string, currentNumbers: string[]) => {
@@ -371,38 +382,42 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         if (setsWonA > setsWonB) setWinner('A');
         else if (setsWonB > setsWonA) setWinner('B');
-        else if (setsWonA === setsWonB && setsWonA > 0) {
+        else if (setsWonA === setsWonB && (a1 > 0 || b1 > 0 || a2 > 0 || b2 > 0)) {
             // Tiebreak by total points
             if ((a1 + a2) > (b1 + b2)) setWinner('A');
             else if ((b1 + b2) > (a1 + a2)) setWinner('B');
-            else setWinner(null);
+            else setWinner(null); // Draw
         } else {
             setWinner(null);
         }
     };
 
     const handleSetScore = (setter: (v: string) => void, value: string, s1a: string, s1b: string, s2a: string, s2b: string, which: string) => {
-        setter(value);
+        let val = value;
+        if (parseInt(value) > 30) val = '30';
+        setter(val);
         // Build updated values
-        const vals = { s1a, s1b, s2a, s2b, [which]: value };
+        const vals = { s1a, s1b, s2a, s2b, [which]: val };
         autoDetectWinner(vals.s1a, vals.s1b, vals.s2a, vals.s2b);
     };
 
     const submitScore = async () => {
         if (!scoreMatch) return;
         if (!set1A || !set1B) { toast.error('กรอกคะแนนอย่างน้อยเซตที่ 1'); return; }
-        if (winner === null) { toast.error('ไม่สามารถระบุผู้ชนะได้'); return; }
+
+        const totalA = (parseInt(set1A) || 0) + (parseInt(set2A) || 0);
+        const totalB = (parseInt(set1B) || 0) + (parseInt(set2B) || 0);
+        const isDraw = totalA === totalB;
 
         const ok = await confirm({
             title: 'บันทึกคะแนน?',
-            message: `ยืนยันผลการแข่งขัน ทีม ${winner} ชนะ?`,
+            message: isDraw ? 'ยืนยันผลการแข่งขัน เสมอ?' : `ยืนยันผลการแข่งขัน ทีม ${winner} ชนะ?`,
             type: 'info',
             confirmText: 'บันทึกคะแนน'
         });
         if (!ok) return;
 
-        const totalA = (parseInt(set1A) || 0) + (parseInt(set2A) || 0);
-        const totalB = (parseInt(set1B) || 0) + (parseInt(set2B) || 0);
+
 
         const supabase = createClient();
         await supabase.from('matches').update({
@@ -411,7 +426,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             team_b_score: totalB,
         }).eq('id', scoreMatch.id);
 
-        toast.success(`บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`);
+        toast.success(isDraw ? 'บันทึกสำเร็จ! เสมอ 🤝' : `บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`);
         setScoreMatch(null);
         loadData(eventId);
     };
@@ -1018,6 +1033,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <div className="flex items-center gap-1.5 mb-1">
                                                         <p className="text-xs font-semibold" style={{ color: 'var(--orange-500)' }}>ทีม A</p>
                                                         {aWon && <Icon icon="solar:cup-star-bold" width={14} style={{ color: 'var(--orange-500)' }} />}
+                                                        {!aWon && !bWon && match.status === 'finished' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-100">เสมอ</span>}
                                                     </div>
                                                     {tA.map((mp) => {
                                                         const isMe = mp.user_id === currentUserId;
@@ -1041,11 +1057,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         );
                                                     })}
                                                 </div>
-                                                <div className="shrink-0 text-center">
+                                                <div className="shrink-0 text-center px-1.5 py-0.5 rounded-full bg-slate-50 border border-slate-100">
                                                     {match.status === 'finished' ? (
                                                         <p className="text-lg font-bold" style={{ color: 'var(--gray-900)' }}>{match.team_a_score} - {match.team_b_score}</p>
                                                     ) : (
-                                                        <span className="text-xs font-bold" style={{ color: 'var(--gray-400)' }}>VS</span>
+                                                        <span className="text-[10px] font-black tracking-tighter text-indigo-400">VS</span>
                                                     )}
                                                 </div>
                                                 <div className="flex-1 p-3 rounded-xl" style={{
@@ -1055,6 +1071,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <div className="flex items-center gap-1.5 mb-1">
                                                         <p className="text-xs font-semibold" style={{ color: '#3b82f6' }}>ทีม B</p>
                                                         {bWon && <Icon icon="solar:cup-star-bold" width={14} style={{ color: '#3b82f6' }} />}
+                                                        {!aWon && !bWon && match.status === 'finished' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-100">เสมอ</span>}
                                                     </div>
                                                     {tB.map((mp) => {
                                                         const isMe = mp.user_id === currentUserId;
@@ -1088,8 +1105,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         {/* My Bill Summary (Personal for Admin) */}
                         {myBill && (
                             <div className={`card p-6 border-none shadow-xl transition-all duration-500 mt-6 animate-in ${players.find(p => p.user_id === currentUserId)?.payment_status === 'paid'
-                                    ? 'bg-gradient-to-br from-green-50 to-white ring-1 ring-green-100'
-                                    : 'bg-gradient-to-br from-blue-50 to-white ring-1 ring-blue-100'
+                                ? 'bg-gradient-to-br from-green-50 to-white ring-1 ring-green-100'
+                                : 'bg-gradient-to-br from-blue-50 to-white ring-1 ring-blue-100'
                                 }`}>
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-3">
@@ -1253,14 +1270,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     {/* Set 1 */}
                                     <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-3">
                                         <input
-                                            type="number" min="0" placeholder="0"
+                                            type="number" min="0" max="30" placeholder="0"
                                             className="form-input form-input-plain text-center text-xl font-bold"
                                             value={set1A}
                                             onChange={(e) => handleSetScore(setSet1A, e.target.value, e.target.value, set1B, set2A, set2B, 's1a')}
                                         />
                                         <span className="text-xs font-bold px-2" style={{ color: 'var(--gray-400)' }}>เซต 1</span>
                                         <input
-                                            type="number" min="0" placeholder="0"
+                                            type="number" min="0" max="30" placeholder="0"
                                             className="form-input form-input-plain text-center text-xl font-bold"
                                             value={set1B}
                                             onChange={(e) => handleSetScore(setSet1B, e.target.value, set1A, e.target.value, set2A, set2B, 's1b')}
@@ -1270,14 +1287,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     {/* Set 2 */}
                                     <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-4">
                                         <input
-                                            type="number" min="0" placeholder="0"
+                                            type="number" min="0" max="30" placeholder="0"
                                             className="form-input form-input-plain text-center text-xl font-bold"
                                             value={set2A}
                                             onChange={(e) => handleSetScore(setSet2A, e.target.value, set1A, set1B, e.target.value, set2B, 's2a')}
                                         />
                                         <span className="text-xs font-bold px-2" style={{ color: 'var(--gray-400)' }}>เซต 2</span>
                                         <input
-                                            type="number" min="0" placeholder="0"
+                                            type="number" min="0" max="30" placeholder="0"
                                             className="form-input form-input-plain text-center text-xl font-bold"
                                             value={set2B}
                                             onChange={(e) => handleSetScore(setSet2B, e.target.value, set1A, set1B, set2A, e.target.value, 's2b')}
@@ -1304,8 +1321,15 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <Icon icon="solar:cup-star-bold" width={20} style={{ color: winner === 'A' ? 'var(--orange-500)' : '#3b82f6' }} />
                                                     <span className="text-[10px] font-bold mt-0.5" style={{ color: winner === 'A' ? 'var(--orange-500)' : '#3b82f6' }}>ชนะ!</span>
                                                 </div>
+                                            ) : ((parseInt(set1A) || 0) + (parseInt(set2A) || 0)) === ((parseInt(set1B) || 0) + (parseInt(set2B) || 0)) && (parseInt(set1A) || parseInt(set1B)) ? (
+                                                <div className="flex flex-col items-center">
+                                                    <Icon icon="solar:hand-shake-bold" width={22} className="text-purple-500" />
+                                                    <span className="text-[10px] font-bold mt-0.5 text-purple-600">เสมอ</span>
+                                                </div>
                                             ) : (
-                                                <span className="text-xs font-bold" style={{ color: 'var(--gray-400)' }}>VS</span>
+                                                <div className="px-2 py-0.5 rounded-full bg-slate-50 border border-slate-100">
+                                                    <span className="text-[10px] font-black tracking-tighter text-indigo-400">VS</span>
+                                                </div>
                                             )}
                                         </div>
                                         <div className="text-center py-2 rounded-xl" style={{
@@ -1322,7 +1346,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     {/* Manual Winner Override */}
                                     <div className="flex gap-2 mb-5">
                                         <button
-                                            onClick={() => setWinner('A')}
+                                            onClick={() => setWinner(winner === 'A' ? null : 'A')}
                                             className="flex-1 btn btn-sm justify-center"
                                             style={{
                                                 background: winner === 'A' ? 'var(--orange-500)' : 'transparent',
@@ -1334,7 +1358,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                             ทีม A ชนะ
                                         </button>
                                         <button
-                                            onClick={() => setWinner('B')}
+                                            onClick={() => setWinner(winner === 'B' ? null : 'B')}
                                             className="flex-1 btn btn-sm justify-center"
                                             style={{
                                                 background: winner === 'B' ? '#3b82f6' : 'transparent',
@@ -1347,7 +1371,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         </button>
                                     </div>
 
-                                    <button onClick={submitScore} disabled={!winner} className="btn btn-primary w-full">
+                                    <button onClick={submitScore} className="btn btn-primary w-full">
                                         <Icon icon="solar:check-circle-linear" width={18} />
                                         บันทึกคะแนน
                                     </button>
@@ -1454,13 +1478,19 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
                                         return (
                                             <div key={ep.id}
-                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group ${sidebarTeam ? 'cursor-pointer hover:bg-opacity-80' : ''}`}
+                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group cursor-pointer ${sidebarTeam ? 'hover:bg-opacity-80' : 'hover:bg-gray-50'}`}
                                                 style={{
                                                     borderBottom: '1px solid var(--gray-50)',
                                                     background: isSelected ? (sidebarTeam === 'A' ? 'rgba(249,115,22,0.08)' : 'rgba(59,130,246,0.08)') : 'transparent',
                                                     borderLeft: isSelected ? `3px solid ${sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6'}` : '3px solid transparent'
                                                 }}
-                                                onClick={() => sidebarTeam && !isDisabledSelection && togglePlayer(ep.user_id, sidebarTeam)}
+                                                onClick={() => {
+                                                    if (sidebarTeam) {
+                                                        if (!isDisabledSelection) togglePlayer(ep.user_id, sidebarTeam);
+                                                    } else {
+                                                        toggleCheckIn(ep);
+                                                    }
+                                                }}
                                             >
                                                 <button onClick={(e) => { e.stopPropagation(); toggleCheckIn(ep); }} className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
                                                     style={{ background: 'var(--orange-500)', color: 'var(--white)' }}>
@@ -1519,13 +1549,19 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
                                         return (
                                             <div key={ep.id}
-                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group ${sidebarTeam ? 'cursor-pointer hover:bg-opacity-80' : ''}`}
+                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group cursor-pointer ${sidebarTeam ? 'hover:bg-opacity-80' : 'hover:bg-blue-50/30'}`}
                                                 style={{
                                                     borderBottom: '1px solid var(--gray-50)',
                                                     background: isSelected ? (sidebarTeam === 'A' ? 'rgba(249,115,22,0.08)' : 'rgba(59,130,246,0.08)') : 'transparent',
                                                     borderLeft: isSelected ? `3px solid ${sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6'}` : '3px solid transparent'
                                                 }}
-                                                onClick={() => sidebarTeam && !isDisabledSelection && togglePlayer(ep.user_id, sidebarTeam)}
+                                                onClick={() => {
+                                                    if (sidebarTeam) {
+                                                        if (!isDisabledSelection) togglePlayer(ep.user_id, sidebarTeam);
+                                                    } else {
+                                                        toggleCheckIn(ep);
+                                                    }
+                                                }}
                                             >
                                                 <button onClick={(e) => { e.stopPropagation(); toggleCheckIn(ep); }} className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
                                                     style={{ background: 'var(--orange-500)', color: 'var(--white)' }}>
@@ -1578,10 +1614,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     {players.filter(p => !p.is_checked_in && !p.is_substitute).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         return (
-                                            <div key={ep.id} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
-                                                <button onClick={() => toggleCheckIn(ep)} className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
+                                            <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
+                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
                                                     style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
-                                                </button>
+                                                </div>
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
@@ -1609,10 +1645,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     {players.filter(p => !p.is_checked_in && p.is_substitute).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         return (
-                                            <div key={ep.id} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
-                                                <button onClick={() => toggleCheckIn(ep)} className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
+                                            <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
+                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
                                                     style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
-                                                </button>
+                                                </div>
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
