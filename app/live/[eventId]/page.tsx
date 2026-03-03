@@ -83,8 +83,8 @@ export default function PublicLiveBoardPage() {
             <header className="bg-white border-b border-gray-100 sticky top-0 z-10 shadow-sm">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-orange-50 text-orange-600 shadow-sm">
-                            <Icon icon="solar:shuttlecock-bold-duotone" width={24} />
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-white shadow-sm overflow-hidden border border-gray-100">
+                            <img src="/images/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
                         </div>
                         <div>
                             <h1 className="text-lg font-black tracking-tight text-gray-900 leading-tight">ก๊วนวันที่ {new Date(event.event_date).toLocaleDateString('th-TH')}</h1>

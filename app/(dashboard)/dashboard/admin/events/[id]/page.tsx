@@ -104,7 +104,10 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="lg:col-span-2 card shadow-sm" style={{ padding: '24px 32px' }}>
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                         <div>
-                            <div className="flex items-center gap-2 mb-1">
+                            <div className="flex items-center gap-3 mb-1">
+                                <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm border border-gray-100 shrink-0">
+                                    <img src="/images/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+                                </div>
                                 <h1 className="text-lg font-black tracking-tight text-gray-900 leading-tight">ก๊วนวันที่ {new Date(event.event_date).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h1>
                                 <span className={`badge ${event.status === 'open' ? 'badge-success' : 'badge-muted'}`}>
                                     {event.status === 'open' ? 'เปิด' : 'ปิด'}

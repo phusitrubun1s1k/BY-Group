@@ -579,7 +579,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
                 <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                     <div>
-                        <h1 className="text-2xl font-bold mb-2" style={{ color: 'var(--gray-900)' }}>จัดแมตช์</h1>
+                        <div className="flex items-center gap-3 mb-2">
+                            <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm border border-gray-100 shrink-0">
+                                <img src="/images/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+                            </div>
+                            <h1 className="text-2xl font-bold" style={{ color: 'var(--gray-900)' }}>จัดแมตช์</h1>
+                        </div>
 
                         {/* Event Summary Box */}
                         <div className="flex flex-wrap items-center gap-2 mt-1">
