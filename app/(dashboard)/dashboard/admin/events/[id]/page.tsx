@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import Link from 'next/link';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
+import QRCode from 'react-qr-code';
 
 export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const [event, setEvent] = useState<Event | null>(null);
@@ -17,6 +18,11 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     const [eventId, setEventId] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const confirm = useConfirm();
+
+    // Generate public live link
+    const publicLiveUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/live/${eventId}`
+        : '';
 
     useEffect(() => {
         params.then((p) => { setEventId(p.id); loadData(p.id); });
@@ -89,41 +95,97 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
     return (
         <div className="animate-in">
-            <Link href="/dashboard/admin/events" className="inline-flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--gray-500)' }}>
+            <Link href="/dashboard/admin/events" className="inline-flex items-center gap-1.5 text-sm mb-4" style={{ color: 'var(--gray-500)' }}>
                 <Icon icon="solar:arrow-left-linear" width={16} /> กลับรายการก๊วน
             </Link>
 
-            {/* Event Info */}
-            <div className="card mb-6 shadow-sm" style={{ padding: '24px 32px' }}>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                        <div className="flex items-center gap-2 mb-1">
-                            <h1 className="text-lg font-bold" style={{ color: 'var(--gray-900)' }}>
-                                ก๊วนวันที่ {new Date(event.event_date).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                            </h1>
-                            <span className={`badge ${event.status === 'open' ? 'badge-success' : 'badge-muted'}`}>
-                                {event.status === 'open' ? 'เปิด' : 'ปิด'}
-                            </span>
+            {/* Event Info & Public Link */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                <div className="lg:col-span-2 card shadow-sm" style={{ padding: '24px 32px' }}>
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                        <div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <h1 className="text-lg font-black tracking-tight text-gray-900 leading-tight">ก๊วนวันที่ {new Date(event.event_date).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h1>
+                                <span className={`badge ${event.status === 'open' ? 'badge-success' : 'badge-muted'}`}>
+                                    {event.status === 'open' ? 'เปิด' : 'ปิด'}
+                                </span>
+                            </div>
+                            <p className="text-sm" style={{ color: 'var(--gray-500)' }}>
+                                {event.shuttlecock_brand} · ฿{event.shuttlecock_price}/ลูก · ค่าสนาม ฿{event.entry_fee} · {eventPlayers.length} ผู้เล่น
+                                {event.courts && event.courts.length > 0 && ` · คอร์ท ${event.courts.join(', ')}`}
+                                {event.start_time && event.end_time && ` · ${event.start_time} - ${event.end_time}`}
+                            </p>
+
+                            <div className="mt-6 p-4 rounded-2xl bg-gray-50 border border-gray-100">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 block">ลิงก์บอร์ดสดสำหรับขาจร</label>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        readOnly
+                                        className="flex-1 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-blue-600 focus:outline-none"
+                                        value={publicLiveUrl}
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(publicLiveUrl);
+                                            toast.success('คัดลอกลิงก์แล้ว');
+                                        }}
+                                        className="p-1.5 rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-blue-500 transition-colors"
+                                        title="คัดลอกลิงก์"
+                                    >
+                                        <Icon icon="solar:copy-bold" width={18} />
+                                    </button>
+                                    <Link
+                                        href={`/live/${eventId}`}
+                                        target="_blank"
+                                        className="p-1.5 rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-orange-500 transition-colors"
+                                        title="เปิดดู"
+                                    >
+                                        <Icon icon="solar:eye-bold" width={18} />
+                                    </Link>
+                                </div>
+                                <p className="text-[10px] font-bold text-gray-400 mt-2 flex items-center gap-1">
+                                    <Icon icon="solar:info-circle-bold" width={12} />
+                                    ขาจรไม่ต้องล็อกอิน สามารถสแกน QR เพื่อดูบอร์ดได้ทันที
+                                </p>
+                            </div>
                         </div>
-                        <p className="text-sm" style={{ color: 'var(--gray-500)' }}>
-                            {event.shuttlecock_brand} · ฿{event.shuttlecock_price}/ลูก · ค่าสนาม ฿{event.entry_fee} · {eventPlayers.length} ผู้เล่น
-                            {event.courts && event.courts.length > 0 && ` · คอร์ท ${event.courts.join(', ')}`}
-                            {event.start_time && event.end_time && ` · ${event.start_time} - ${event.end_time}`}
-                        </p>
+
+                        <div className="flex flex-col gap-2 shrink-0">
+                            {event.status === 'open' ? (
+                                <>
+                                    <div className="flex gap-2">
+                                        <Link href={`/dashboard/admin/events/${eventId}/edit`} className="btn btn-sm flex-1" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6' }}>
+                                            <Icon icon="solar:pen-linear" width={16} /> แก้ไข
+                                        </Link>
+                                        <Link href={`/dashboard/admin/matches/${eventId}`} className="btn btn-primary btn-sm flex-1">
+                                            <Icon icon="solar:sort-horizontal-linear" width={16} /> จัดแมตช์
+                                        </Link>
+                                    </div>
+                                    <button onClick={closeEvent} className="btn btn-secondary btn-sm w-full" disabled={closing}>
+                                        <Icon icon="solar:lock-linear" width={16} /> ปิดก๊วน
+                                    </button>
+                                </>
+                            ) : (
+                                <Link href={`/dashboard/admin/matches/${eventId}`} className="btn btn-secondary btn-sm w-full">
+                                    <Icon icon="solar:eye-bold" width={16} /> ดูบอร์ดจัดแมตช์
+                                </Link>
+                            )}
+                        </div>
                     </div>
-                    {event.status === 'open' && (
-                        <div className="flex gap-2">
-                            <Link href={`/dashboard/admin/events/${eventId}/edit`} className="btn btn-sm" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6' }}>
-                                <Icon icon="solar:pen-linear" width={16} /> แก้ไข
-                            </Link>
-                            <Link href={`/dashboard/admin/matches/${eventId}`} className="btn btn-primary btn-sm">
-                                <Icon icon="solar:sort-horizontal-linear" width={16} /> จัดแมตช์
-                            </Link>
-                            <button onClick={closeEvent} className="btn btn-secondary btn-sm" disabled={closing}>
-                                <Icon icon="solar:lock-linear" width={16} /> ปิดก๊วน
-                            </button>
-                        </div>
-                    )}
+                </div>
+
+                {/* QR Code Card */}
+                <div className="card shadow-sm flex flex-col items-center justify-center p-6 text-center bg-white ring-1 ring-gray-100">
+                    <div className="bg-white p-3 rounded-2xl shadow-inner border border-gray-50 mb-3">
+                        <QRCode
+                            value={publicLiveUrl}
+                            size={120}
+                            style={{ height: "auto", maxWidth: "100%", width: "100%" }}
+                            viewBox={`0 0 256 256`}
+                        />
+                    </div>
+                    <p className="text-[11px] font-black text-gray-900 uppercase tracking-tight">สแกนดูบอร์ดคิวแบบสด</p>
+                    <p className="text-[9px] font-bold text-gray-400">Scan to view Live Board</p>
                 </div>
             </div>
 

@@ -53,6 +53,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [unjoinedPlayers, setUnjoinedPlayers] = useState<Profile[]>([]);
     const [searchingPlayers, setSearchingPlayers] = useState(false);
     const [addingPlayer, setAddingPlayer] = useState<string | null>(null);
+    const [showAddGuestModal, setShowAddGuestModal] = useState(false);
+    const [guestName, setGuestName] = useState('');
+    const [guestSkill, setGuestSkill] = useState<string | null>(null);
 
     const confirm = useConfirm();
 
@@ -148,7 +151,44 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (matchesRes.data) setMatches(matchesRes.data as Match[]);
         if (userRes.data.user) setCurrentUserId(userRes.data.user.id);
         setLoading(false);
-    }, []);
+    }, [event]);
+
+    const handleAddGuest = async () => {
+        if (!guestName.trim()) return toast.error('กรุณาระบุชื่อ');
+        setCreating(true);
+        const supabase = createClient();
+        try {
+            const guestId = crypto.randomUUID();
+            // 1. Create Profile
+            const { error: pErr } = await supabase.from('profiles').insert({
+                id: guestId,
+                display_name: guestName,
+                full_name: guestName,
+                is_guest: true,
+                skill_level: guestSkill,
+                role: 'user'
+            });
+            if (pErr) throw pErr;
+
+            // 2. Add to Event
+            const { error: eErr } = await supabase.from('event_players').insert({
+                event_id: eventId,
+                user_id: guestId,
+                is_checked_in: true
+            });
+            if (eErr) throw eErr;
+
+            toast.success('เพิ่มขาจรเรียบร้อย');
+            setShowAddGuestModal(false);
+            setGuestName('');
+            setGuestSkill(null);
+            loadData(eventId);
+        } catch (err: any) {
+            toast.error(err.message);
+        } finally {
+            setCreating(false);
+        }
+    };
 
     useEffect(() => {
         if (!eventId) return;
@@ -1415,6 +1455,139 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             </div>,
                             document.body
                         )}
+
+                        {/* Add Guest Modal */}
+                        {showAddGuestModal && typeof document !== 'undefined' && createPortal(
+                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+                                <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => !creating && setShowAddGuestModal(false)} />
+                                <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
+
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(147,51,234,0.1)' }}>
+                                            <Icon icon="solar:user-plus-bold" width={20} style={{ color: 'var(--purple-600)' }} />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>เพิ่มขาจร (Guest)</h3>
+                                            <p className="text-sm" style={{ color: 'var(--gray-500)' }}>สำหรับผู้เล่นที่ยังไม่มีบัญชีในระบบ</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-group mb-4">
+                                        <label className="text-xs font-bold mb-1.5 block" style={{ color: 'var(--gray-700)' }}>ชื่อแสดงผล <span className="text-red-500">*</span></label>
+                                        <input
+                                            autoFocus
+                                            className="form-input"
+                                            placeholder="กรอกชื่อขาจร..."
+                                            value={guestName}
+                                            onChange={(e) => setGuestName(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleAddGuest()}
+                                        />
+                                    </div>
+
+                                    <div className="form-group mb-6">
+                                        <label className="text-xs font-bold mb-1.5 block" style={{ color: 'var(--gray-700)' }}>ระดับฝีมือ (ไม่บังคับ)</label>
+                                        <select
+                                            className="form-input"
+                                            value={guestSkill || ''}
+                                            onChange={(e) => setGuestSkill(e.target.value || null)}
+                                        >
+                                            <option value="">-- เลือกระดับ --</option>
+                                            <option value="S">S</option>
+                                            <option value="P-">P-</option>
+                                            <option value="P">P</option>
+                                            <option value="P+">P+</option>
+                                            <option value="C">C</option>
+                                            <option value="B">B</option>
+                                            <option value="A">A</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setShowAddGuestModal(false)} disabled={creating} className="btn btn-secondary flex-1">ยกเลิก</button>
+                                        <button onClick={handleAddGuest} disabled={creating} className="btn flex-1 bg-purple-600 hover:bg-purple-700 border-none text-white">
+                                            {creating ? <div className="spinner" /> : 'เพิ่มผู้เล่นขาจร'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>,
+                            document.body
+                        )}
+
+                        {/* Add Player Modal */}
+                        {showAddPlayerModal && typeof document !== 'undefined' && createPortal(
+                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+                                <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => setShowAddPlayerModal(false)} />
+                                <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
+
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(249,115,22,0.1)' }}>
+                                            <Icon icon="solar:users-group-rounded-bold" width={20} style={{ color: 'var(--orange-500)' }} />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>เพิ่มผู้เล่น</h3>
+                                            <p className="text-sm" style={{ color: 'var(--gray-500)' }}>เพิ่มผู้เล่นที่มีบัญชีในระบบลงในก๊วนนี้</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-group mb-4">
+                                        <div className="relative">
+                                            <Icon icon="solar:magnifer-linear" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" width={16} />
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                className="form-input pl-9"
+                                                placeholder="ค้นหาชื่อผู้เล่น..."
+                                                value={newPlayerSearch}
+                                                onChange={(e) => {
+                                                    setNewPlayerSearch(e.target.value);
+                                                    searchUnjoinedPlayers(e.target.value);
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="max-h-60 overflow-y-auto mb-4 border border-gray-100 rounded-xl">
+                                        {searchingPlayers ? (
+                                            <div className="flex justify-center p-4"><div className="spinner border-orange-500 border-t-transparent" /></div>
+                                        ) : unjoinedPlayers.length > 0 ? (
+                                            <div className="divide-y divide-gray-50">
+                                                {unjoinedPlayers.map(p => (
+                                                    <div key={p.id} className="flex items-center justify-between p-3 hover:bg-orange-50/50 transition-colors">
+                                                        <div className="flex items-center gap-2 overflow-hidden">
+                                                            <div className="w-8 h-8 rounded-full bg-gray-100 shrink-0 overflow-hidden flex items-center justify-center border border-gray-200">
+                                                                {p.avatar_url ? (
+                                                                    <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
+                                                                ) : (
+                                                                    <Icon icon="solar:user-bold" className="text-gray-400" width={16} />
+                                                                )}
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="text-sm font-medium text-gray-900 truncate">{p.display_name}</p>
+                                                                {p.skill_level && (
+                                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded text-gray-500 bg-gray-100 border border-gray-200">{p.skill_level}</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            disabled={addingPlayer === p.id}
+                                                            onClick={() => addSubstitutePlayer(p.id)} // <--- เปลี่ยนเป็นชื่อนี้ครับ
+                                                            className="btn btn-sm bg-orange-500 hover:bg-orange-600 border-none text-white whitespace-nowrap shrink-0 ml-2"
+                                                        >
+                                                            {addingPlayer === p.id ? <div className="spinner" style={{ width: 14, height: 14 }} /> : 'เพิ่ม'}
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="p-4 text-center text-sm text-gray-500 bg-gray-50">ไม่พบผู้เล่น</div>
+                                        )}
+                                    </div>
+
+                                    <button onClick={() => setShowAddPlayerModal(false)} className="btn btn-secondary w-full">ปิด</button>
+                                </div>
+                            </div>,
+                            document.body
+                        )}
                     </div>{/* end main content */}
 
                     {/* Check-in Side Panel (inline) Add back the inactive sections as requested */}
@@ -1433,8 +1606,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1">
-                                        <button onClick={() => { setShowAddPlayerModal(true); searchUnjoinedPlayers(''); }} className="px-2 py-1.5 rounded-lg transition-colors bg-white hover:bg-orange-50/50 border border-gray-200 text-xs font-bold flex items-center gap-1" style={{ color: 'var(--orange-500)' }}>
+                                        <button onClick={() => setShowAddGuestModal(true)} className="px-2 py-1.5 rounded-lg transition-colors bg-white hover:bg-purple-50/50 border border-gray-200 text-[10px] font-black flex items-center gap-1" style={{ color: 'var(--purple-600)' }}>
                                             <Icon icon="solar:user-plus-bold" width={14} />
+                                            แอดขาจร
+                                        </button>
+                                        <button onClick={() => { setShowAddPlayerModal(true); searchUnjoinedPlayers(''); }} className="px-2 py-1.5 rounded-lg transition-colors bg-white hover:bg-orange-50/50 border border-gray-200 text-[10px] font-black flex items-center gap-1" style={{ color: 'var(--orange-500)' }}>
+                                            <Icon icon="solar:users-group-rounded-bold" width={14} />
                                             เพิ่ม
                                         </button>
                                         <button onClick={() => setShowPlayersSidebar(false)} className="p-1.5 rounded-lg transition-colors hover:bg-gray-100">
@@ -1605,6 +1782,67 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         );
                                     })}
 
+                                    {/* 3. Guest Players */}
+                                    {players.filter(p => (p.profiles as unknown as Profile)?.is_guest).length > 0 && (
+                                        <div className="px-3 py-1.5" style={{ background: 'rgba(147,51,234,0.03)' }}>
+                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--purple-600)' }}>ขาจร (แขก)</p>
+                                        </div>
+                                    )}
+                                    {players.filter(p => (p.profiles as unknown as Profile)?.is_guest).map(ep => {
+                                        const prof = ep.profiles as unknown as Profile;
+                                        const pstat = playerStats[ep.user_id];
+                                        const isPaid = ep.payment_status === 'paid';
+                                        const isSelected = sidebarTeam === 'A' ? teamA.includes(ep.user_id) : sidebarTeam === 'B' ? teamB.includes(ep.user_id) : false;
+                                        const inOther = (sidebarTeam === 'A' ? teamB : sidebarTeam === 'B' ? teamA : []).includes(ep.user_id);
+                                        const isDisabledSelection = isPaid && !isSelected;
+
+                                        return (
+                                            <div key={ep.id}
+                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group cursor-pointer ${sidebarTeam ? 'hover:bg-opacity-80' : 'hover:bg-purple-50/30'}`}
+                                                style={{
+                                                    borderBottom: '1px solid var(--gray-50)',
+                                                    background: isSelected ? (sidebarTeam === 'A' ? 'rgba(249,115,22,0.08)' : 'rgba(59,130,246,0.08)') : 'transparent',
+                                                    borderLeft: isSelected ? `3px solid ${sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6'}` : '3px solid transparent'
+                                                }}
+                                                onClick={() => {
+                                                    if (sidebarTeam) {
+                                                        if (!isDisabledSelection) togglePlayer(ep.user_id, sidebarTeam);
+                                                    } else {
+                                                        toggleCheckIn(ep);
+                                                    }
+                                                }}
+                                            >
+                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-purple-100 text-purple-600">
+                                                    <Icon icon="solar:ghost-bold" width={14} />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className={`text-xs font-semibold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-purple-600'}`}>
+                                                            {prof?.display_name}
+                                                        </p>
+                                                        {prof?.skill_level && (
+                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+                                                                style={{
+                                                                    background: `${getSkillColor(prof.skill_level)}15`,
+                                                                    color: getSkillColor(prof.skill_level),
+                                                                    border: `1px solid ${getSkillColor(prof.skill_level)}30`
+                                                                }}>
+                                                                {prof.skill_level}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {isSelected ? (
+                                                    <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
+                                                ) : isPaid ? (
+                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>จ่ายแล้ว</span>
+                                                ) : (
+                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>ค้าง</span>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+
                                     {/* 3. Not checked-in Friends (Regular) */}
                                     {players.filter(p => !p.is_checked_in && !p.is_substitute).length > 0 && (
                                         <div className="px-3 py-1.5" style={{ background: 'var(--gray-50)' }}>
@@ -1671,89 +1909,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             </div>
                         </div>
                     )}
-                </div>{/* end flex container */}
+                </div>
             </div>
-
-            {/* Add Substitute Player Modal */}
-            {
-                showAddPlayerModal && typeof document !== 'undefined' && createPortal(
-                    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-                        <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => setShowAddPlayerModal(false)} />
-                        <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: 0 }}>
-                            <div className="p-4 border-b border-gray-100 bg-gray-50/50">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(249,115,22,0.1)' }}>
-                                            <Icon icon="solar:user-plus-bold" width={20} style={{ color: 'var(--orange-500)' }} />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>เพิ่มผู้เล่นสำรอง</h3>
-                                            <p className="text-xs" style={{ color: 'var(--gray-500)' }}>เลือกผู้เล่นที่ไม่ได้ลงทะเบียนเพื่อเพิ่มเข้าก๊วน</p>
-                                        </div>
-                                    </div>
-                                    <button onClick={() => setShowAddPlayerModal(false)} className="p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500">
-                                        <Icon icon="solar:close-circle-linear" width={24} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="p-4 border-b border-gray-100">
-                                <div className="relative">
-                                    <Icon icon="solar:minimalistic-magnifer-linear" width={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                                    <input
-                                        autoFocus
-                                        className="form-input text-sm pl-9"
-                                        placeholder="ค้นหาชื่อผู้ใช้งาน..."
-                                        value={newPlayerSearch}
-                                        onChange={(e) => searchUnjoinedPlayers(e.target.value)}
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="p-2 overflow-y-auto" style={{ maxHeight: '250px' }}>
-                                {searchingPlayers ? (
-                                    <div className="flex flex-col flex-center py-6 text-gray-400 gap-2">
-                                        <div className="spinner spinner-sm" />
-                                        <span className="text-xs font-medium">กำลังค้นหา...</span>
-                                    </div>
-                                ) : unjoinedPlayers.length > 0 ? (
-                                    unjoinedPlayers.map(prof => (
-                                        <div key={prof.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
-                                            <div className="flex items-center gap-2.5">
-                                                <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold text-xs ring-2 ring-white shadow-sm shrink-0">
-                                                    {prof.display_name.charAt(0).toUpperCase()}
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <p className="text-xs font-bold text-gray-900 truncate">{prof.display_name}</p>
-                                                    {prof.skill_level && (
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 inline-block"
-                                                            style={{ background: `${getSkillColor(prof.skill_level)}10`, color: getSkillColor(prof.skill_level) }}>
-                                                            {prof.skill_level}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <button
-                                                onClick={() => addSubstitutePlayer(prof.id)}
-                                                disabled={addingPlayer === prof.id}
-                                                className="btn btn-sm text-xs px-3"
-                                                style={{ background: 'rgba(249,115,22,0.1)', color: 'var(--orange-600)', padding: '6px 12px' }}
-                                            >
-                                                {addingPlayer === prof.id ? <div className="spinner spinner-xs border-orange-500 border-t-transparent" /> : 'เพิ่ม'}
-                                            </button>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-6">
-                                        <p className="text-xs text-gray-400 font-medium">ไม่พบผู้ใช้งานที่ระบุ</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>,
-                    document.body
-                )
-            }
         </>
     );
 }
