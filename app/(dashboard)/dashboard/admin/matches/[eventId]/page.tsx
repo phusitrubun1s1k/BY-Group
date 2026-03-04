@@ -300,7 +300,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         const supabase = createClient();
 
         // Find users matching query
-        let queryBuilder = supabase.from('profiles').select('*').limit(50);
+        let queryBuilder = supabase.from('profiles').select('*').eq('is_guest', false).limit(50);
         if (query.trim().length > 0) {
             queryBuilder = queryBuilder.ilike('display_name', `%${query}%`);
         }
@@ -1749,12 +1749,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 250px)' }}>
 
                                     {/* 1. Checked-in Friends (Regular) */}
-                                    {players.filter(p => p.is_checked_in && !p.is_substitute).length > 0 && (
+                                    {players.filter(p => p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
                                         <div className="px-3 py-1.5" style={{ background: 'rgba(249,115,22,0.03)' }}>
                                             <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--orange-500)' }}>เช็คอินแล้ว</p>
                                         </div>
                                     )}
-                                    {players.filter(p => p.is_checked_in && !p.is_substitute).map(ep => {
+                                    {players.filter(p => p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         const pstat = playerStats[ep.user_id];
                                         const isPaid = ep.payment_status === 'paid';
@@ -1814,12 +1814,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     })}
 
                                     {/* 2. Checked-in Substitutes */}
-                                    {players.filter(p => p.is_checked_in && p.is_substitute).length > 0 && (
+                                    {players.filter(p => p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
                                         <div className="px-3 py-1.5" style={{ background: 'rgba(59,130,246,0.03)' }}>
                                             <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: '#3b82f6' }}>ตัวสำรอง (เช็คอิน)</p>
                                         </div>
                                     )}
-                                    {players.filter(p => p.is_checked_in && p.is_substitute).map(ep => {
+                                    {players.filter(p => p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         const pstat = playerStats[ep.user_id];
                                         const isPaid = ep.payment_status === 'paid';
@@ -1884,12 +1884,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     })}
 
                                     {/* 3. Guest Players */}
-                                    {players.filter(p => (p.profiles as unknown as Profile)?.is_guest).length > 0 && (
+                                    {players.filter(p => p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length > 0 && (
                                         <div className="px-3 py-1.5" style={{ background: 'rgba(147,51,234,0.03)' }}>
                                             <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--purple-600)' }}>ขาจร (แขก)</p>
                                         </div>
                                     )}
-                                    {players.filter(p => (p.profiles as unknown as Profile)?.is_guest).map(ep => {
+                                    {players.filter(p => p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         const pstat = playerStats[ep.user_id];
                                         const isPaid = ep.payment_status === 'paid';
@@ -1952,12 +1952,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     })}
 
                                     {/* 3. Not checked-in Friends (Regular) */}
-                                    {players.filter(p => !p.is_checked_in && !p.is_substitute).length > 0 && (
+                                    {players.filter(p => !p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
                                         <div className="px-3 py-1.5" style={{ background: 'var(--gray-50)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--gray-400)' }}>ยังไม่มา ({players.filter(p => !p.is_checked_in && !p.is_substitute).length})</p>
+                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--gray-400)' }}>ยังไม่มา ({players.filter(p => !p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length})</p>
                                         </div>
                                     )}
-                                    {players.filter(p => !p.is_checked_in && !p.is_substitute).map(ep => {
+                                    {players.filter(p => !p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         return (
                                             <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>

@@ -33,7 +33,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         const [eventRes, playersRes, usersRes] = await Promise.all([
             supabase.from('events').select('*').eq('id', id).single(),
             supabase.from('event_players').select('*, profiles(*)').eq('event_id', id),
-            supabase.from('profiles').select('*').order('display_name'),
+            supabase.from('profiles').select('*').eq('is_guest', false).order('display_name'),
         ]);
         if (eventRes.data) setEvent(eventRes.data as Event);
         if (playersRes.data) setEventPlayers(playersRes.data as EventPlayer[]);

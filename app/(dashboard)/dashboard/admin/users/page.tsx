@@ -75,6 +75,8 @@ export default function UserManagementPage() {
     }, [fetchUsers]);
 
     const filteredUsers = users.filter(user => {
+        if (user.is_guest) return false;
+
         const matchesSearch =
             user.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             user.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -222,7 +224,7 @@ export default function UserManagementPage() {
                             </div>
                             <div className="pr-2">
                                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">สมาชิก</p>
-                                <p className="text-xl font-black text-gray-900 leading-none">{users.filter(u => u.role === 'user').length}</p>
+                                <p className="text-xl font-black text-gray-900 leading-none">{users.filter(u => u.role === 'user' && !u.is_guest).length}</p>
                             </div>
                         </div>
                     </div>
