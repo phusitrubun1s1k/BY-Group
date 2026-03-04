@@ -335,6 +335,28 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         loadData(eventId);
     };
 
+    const handleRemovePlayer = async (epId: string, playerName: string) => {
+        const ok = await confirm({
+            title: 'ลบผู้เล่น?',
+            message: `ยืนยันการลบ ${playerName} ออกจากก๊วน? ข้อมูลการเข้าร่วมจะถูกลบถาวร`,
+            type: 'danger',
+            confirmText: 'ลบผู้เล่น'
+        });
+        if (!ok) return;
+
+        const supabase = createClient();
+        setPlayers(prev => prev.filter(p => p.id !== epId)); // Optimistic UI
+        const { error } = await supabase.from('event_players').delete().eq('id', epId);
+
+        if (error) {
+            toast.error('ไม่สามารถลบผู้เล่นได้: ' + error.message);
+            loadData(eventId); // Rollback
+            return;
+        }
+
+        toast.success(`ลบ ${playerName} ออกจากก๊วนแล้ว`);
+    };
+
     const editMatch = (match: Match) => {
         const tA = match.match_players?.filter((mp) => mp.team === 'A').map((mp) => mp.user_id) || [];
         const tB = match.match_players?.filter((mp) => mp.team === 'B').map((mp) => mp.user_id) || [];
@@ -581,7 +603,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                     <Icon icon="solar:arrow-left-linear" width={16} /> กลับหน้าก๊วน
                 </Link>
 
-                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6 sticky z-[30] bg-gray-50/95 backdrop-blur-sm pb-4 pt-2 -mx-4 px-4 border-b border-gray-200 shadow-sm top-16 lg:top-0" style={{ marginTop: '-16px' }}>
                     <div>
                         <div className="flex items-center gap-3 mb-2">
                             <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm border border-gray-100 shrink-0">
@@ -659,7 +681,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
                         {/* Create Form */}
                         {showForm && (
-                            <div className="card mb-6 animate-in shadow-sm" style={{ padding: '24px 32px' }}>
+                            <div className="card mb-6 animate-in shadow-md sticky z-[40] border border-gray-200 top-[170px] lg:top-[120px] 2xl:top-[88px]" style={{ padding: '24px 32px' }}>
                                 <h3 className="font-bold mb-5 text-lg" style={{ color: 'var(--gray-900)' }}>{editingMatchId ? 'แก้ไขแมตช์' : 'สร้างแมตช์ใหม่'}</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                     {(['A', 'B'] as const).map((team) => {
@@ -808,6 +830,22 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     </button>
                                                 )}
                                             </div>
+
+                                            {/* Team Toggle */}
+                                            <div className="flex bg-gray-100 p-1 rounded-xl">
+                                                <button
+                                                    onClick={() => setSidebarTeam('A')}
+                                                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${sidebarTeam === 'A' ? 'bg-white shadow-sm text-orange-500' : 'text-gray-500 hover:text-gray-700'}`}
+                                                >
+                                                    ทีม A
+                                                </button>
+                                                <button
+                                                    onClick={() => setSidebarTeam('B')}
+                                                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${sidebarTeam === 'B' ? 'bg-white shadow-sm text-blue-500' : 'text-gray-500 hover:text-gray-700'}`}
+                                                >
+                                                    ทีม B
+                                                </button>
+                                            </div>
                                         </div>
 
                                         {/* Player List */}
@@ -860,6 +898,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                 <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                                                        มือ {prof?.skill_level || 'N/A'}
+                                                                                    </span>
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         {pstat?.total || 0} เกม
                                                                                     </span>
@@ -927,12 +968,27 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                             opacity: isDisabled ? 0.6 : inOther ? 0.5 : 1,
                                                                             cursor: isDisabled ? 'not-allowed' : 'pointer',
                                                                         }}>
-                                                                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                                                                            <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
-                                                                            <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                {pstat?.total || 0} เกม
-                                                                            </span>
-                                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 border border-blue-100">สำรอง</span>
+                                                                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                                                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 shadow-sm"
+                                                                                style={{
+                                                                                    background: inThis ? clr : 'rgba(59,130,246,0.1)',
+                                                                                    color: inThis ? 'var(--white)' : '#3b82f6'
+                                                                                }}>
+                                                                                {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
+                                                                            </div>
+                                                                            <div className="min-w-0 pr-2">
+                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
+                                                                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                                                        มือ {prof?.skill_level || 'N/A'}
+                                                                                    </span>
+                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                                                        {pstat?.total || 0} เกม
+                                                                                    </span>
+                                                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 border border-blue-100">สำรอง</span>
+                                                                                </div>
+                                                                            </div>
                                                                         </div>
 
                                                                         {/* Right Side */}
@@ -999,6 +1055,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                 <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                                                        มือ {prof?.skill_level || 'N/A'}
+                                                                                    </span>
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         {pstat?.total || 0} เกม
                                                                                     </span>
@@ -1728,6 +1787,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-orange-600'}`}>
                                                             {prof?.display_name}
                                                         </p>
+                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                                                            มือ {prof?.skill_level || 'N/A'}
+                                                        </span>
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
@@ -1791,6 +1853,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             {prof?.display_name}
                                                         </p>
                                                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f620', color: '#3b82f6' }}>สำรอง</span>
+                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                                                            มือ {prof?.skill_level || 'N/A'}
+                                                        </span>
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
@@ -1807,8 +1872,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
                                                 ) : isPaid ? (
                                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>จ่ายแล้ว</span>
-                                                ) : (
+                                                ) : sidebarTeam ? (
                                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>ค้าง</span>
+                                                ) : (
+                                                    <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
+                                                        <Icon icon="solar:trash-bin-trash-bold" width={16} />
+                                                    </button>
                                                 )}
                                             </div>
                                         );
@@ -1852,15 +1921,31 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-purple-600'}`}>
                                                             {prof?.display_name}
                                                         </p>
+                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                                                            มือ {prof?.skill_level || 'N/A'}
+                                                        </span>
                                                     </div>
-                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
+                                                            {pstat?.total || 0} เกม
+                                                        </span>
+                                                        {pstat && pstat.playing && (
+                                                            <span className="text-[9px] font-bold text-orange-500 px-1.5 py-0.5 rounded-md bg-orange-50">กำลังตี</span>
+                                                        )}
+                                                        {inOther && <span className="text-[9px] font-bold text-red-500">อยู่ทีม {sidebarTeam === 'A' ? 'B' : 'A'}</span>}
+                                                    </div>
                                                 </div>
                                                 {isSelected ? (
                                                     <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
                                                 ) : isPaid ? (
                                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>จ่ายแล้ว</span>
-                                                ) : (
+                                                ) : sidebarTeam ? (
                                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>ค้าง</span>
+                                                ) : (
+                                                    <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
+                                                        <Icon icon="solar:trash-bin-trash-bold" width={16} />
+                                                    </button>
                                                 )}
                                             </div>
                                         );
@@ -1882,6 +1967,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
+                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                                                            มือ {prof?.skill_level || 'N/A'}
+                                                        </span>
                                                     </div>
                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
@@ -1906,9 +1994,15 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <div className="flex items-center gap-2 mb-1">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
                                                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f610', color: '#3b82f6' }}>สำรอง</span>
+                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                                                            มือ {prof?.skill_level || 'N/A'}
+                                                        </span>
                                                     </div>
                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
+                                                <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
+                                                    <Icon icon="solar:trash-bin-trash-bold" width={16} />
+                                                </button>
                                             </div>
                                         );
                                     })}
