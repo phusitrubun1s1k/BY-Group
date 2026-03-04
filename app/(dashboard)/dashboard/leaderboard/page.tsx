@@ -397,11 +397,11 @@ export default function LeaderboardPage() {
                                     <Icon icon="solar:close-circle-bold" width={20} />
                                 </button>
                             </div>
-                            <div className="p-4 space-y-2 max-h-[60vh] overflow-y-auto">
+                            <div className="p-4 space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
                                 {RANK_TIERS.map((rt, i) => (
                                     <div key={i} className={`flex items-center justify-between p-4 rounded-2xl border transition-all hover:scale-[1.02] ${rt.bg} ${rt.border} ${rt.text}`}>
                                         <div className="flex items-center gap-3">
-                                            <div className={`w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center animate-pulse-subtle`} style={{ color: rt.color }}>
+                                            <div className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center" style={{ color: rt.color }}>
                                                 <Icon icon={rt.icon} width={24} />
                                             </div>
                                             <div>
@@ -409,7 +409,7 @@ export default function LeaderboardPage() {
                                                 <p className="text-[10px] opacity-70 uppercase tracking-widest font-bold">MIN MMR: {rt.minMMR}</p>
                                             </div>
                                         </div>
-                                        {myData && myData.mmr >= rt.minMMR && (
+                                        {myFullData && myFullData.mmr >= rt.minMMR && (
                                             <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-green-500/10 text-green-600">
                                                 <Icon icon="solar:check-circle-bold" width={16} />
                                                 <span className="text-[9px] font-black uppercase">Unlocked</span>

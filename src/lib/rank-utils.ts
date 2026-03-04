@@ -10,40 +10,67 @@ export interface RankTier {
 
 export const RANK_TIERS: RankTier[] = [
     {
-        name: 'Iron',
+        name: 'Wood',
         minMMR: 0,
-        color: '#94a3b8',
+        color: '#78350f',
+        icon: 'solar:shield-cross-bold',
+        bg: 'bg-amber-50',
+        border: 'border-amber-200',
+        text: 'text-amber-900'
+    },
+    {
+        name: 'Stone',
+        minMMR: 400,
+        color: '#4b5563',
         icon: 'solar:shield-minimalistic-bold',
-        bg: 'bg-slate-100',
+        bg: 'bg-gray-100',
+        border: 'border-gray-300',
+        text: 'text-gray-700'
+    },
+    {
+        name: 'Coal',
+        minMMR: 750,
+        color: '#1f2937',
+        icon: 'solar:shield-bold',
+        bg: 'bg-slate-200',
+        border: 'border-slate-400',
+        text: 'text-slate-800'
+    },
+    {
+        name: 'Iron',
+        minMMR: 1000,
+        color: '#94a3b8',
+        icon: 'solar:shield-up-bold',
+        bg: 'bg-slate-50',
         border: 'border-slate-200',
-        text: 'text-slate-500'
+        text: 'text-slate-600'
     },
     {
         name: 'Bronze',
-        minMMR: 1200,
+        minMMR: 1300,
         color: '#b45309',
-        icon: 'solar:shield-bold',
-        bg: 'bg-amber-50',
-        border: 'border-amber-200',
-        text: 'text-amber-700'
+        icon: 'solar:medal-ribbon-bold',
+        bg: 'bg-orange-50',
+        border: 'border-orange-200',
+        text: 'text-orange-800'
     },
     {
         name: 'Silver',
-        minMMR: 1600,
+        minMMR: 1650,
         color: '#64748b',
         icon: 'solar:medal-star-bold',
-        bg: 'bg-slate-50',
-        border: 'border-slate-300',
-        text: 'text-slate-600'
+        bg: 'bg-blue-50',
+        border: 'border-blue-200',
+        text: 'text-blue-700'
     },
     {
         name: 'Gold',
         minMMR: 2000,
-        color: '#eab308',
+        color: '#ca8a04',
         icon: 'solar:cup-star-bold',
         bg: 'bg-yellow-50',
         border: 'border-yellow-300',
-        text: 'text-yellow-700'
+        text: 'text-yellow-800'
     },
     {
         name: 'Platinum',
@@ -52,34 +79,52 @@ export const RANK_TIERS: RankTier[] = [
         icon: 'solar:crown-minimalistic-bold',
         bg: 'bg-sky-50',
         border: 'border-sky-300',
-        text: 'text-sky-600'
+        text: 'text-sky-700'
+    },
+    {
+        name: 'Emerald',
+        minMMR: 2850,
+        color: '#10b981',
+        icon: 'solar:star-bold',
+        bg: 'bg-emerald-50',
+        border: 'border-emerald-300',
+        text: 'text-emerald-700'
     },
     {
         name: 'Diamond',
-        minMMR: 2800,
+        minMMR: 3300,
         color: '#8b5cf6',
         icon: 'solar:magic-stick-3-bold',
         bg: 'bg-violet-50',
         border: 'border-violet-300',
-        text: 'text-violet-600'
+        text: 'text-violet-700'
     },
     {
         name: 'Master',
-        minMMR: 3200,
+        minMMR: 3800,
         color: '#f43f5e',
         icon: 'solar:fire-bold',
         bg: 'bg-rose-50',
         border: 'border-rose-300',
-        text: 'text-rose-600'
+        text: 'text-rose-700'
     },
     {
         name: 'Grandmaster',
-        minMMR: 3600,
+        minMMR: 4300,
         color: '#fbbf24',
         icon: 'solar:crown-star-bold',
-        bg: 'bg-amber-100',
+        bg: 'bg-amber-50',
         border: 'border-amber-400',
-        text: 'text-amber-600'
+        text: 'text-amber-800'
+    },
+    {
+        name: 'Challenger',
+        minMMR: 4800,
+        color: '#ec4899',
+        icon: 'solar:star-rainbow-bold',
+        bg: 'bg-pink-50',
+        border: 'border-pink-300',
+        text: 'text-pink-700'
     }
 ];
 

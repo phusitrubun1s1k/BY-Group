@@ -4,10 +4,12 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { createClient } from '@/src/lib/supabase/client';
 import type { Event, EventPlayer, Match, Profile } from '@/src/types';
+import { Icon } from '@iconify/react';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 import { useConfirm } from '@/src/components/ConfirmProvider';
-import { Icon } from '@iconify/react';
+import RankBadge from '@/src/components/RankBadge';
+import { getRankFromMMR } from '@/src/lib/rank-utils';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 
 const GUEST_SKILL_OPTIONS: SelectOption[] = [
@@ -531,25 +533,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         // 3. Pick top 4
         const candidates = sortedPlayers.slice(0, 4);
 
-        // 4. Define Skill Weights (Scale 1-10)
-        const getWeight = (lvl: string | null) => {
-            if (!lvl) return 1;
-            const l = lvl.toUpperCase();
-            if (l === 'เปาะแปะ') return 1;
-            if (l === 'BG') return 2;
-            if (l === 'N') return 3;
-            if (l === 'S') return 4;
-            if (l === 'P-') return 5;
-            if (l === 'P') return 6;
-            if (l === 'P+') return 7;
-            if (l === 'C') return 8;
-            if (l === 'B') return 9;
-            if (l === 'A') return 10;
-            return 1;
+        // 4. MMR-based weights (direct MMR values)
+        const getWeight = (prof: Profile | null) => {
+            return prof?.mmr || 1000;
         };
 
-        // 5. Find best 2v2 combination
-        // Pairs: (0,1 vs 2,3), (0,2 vs 1,3), (0,3 vs 1,2)
+        // 5. Find best 2v2 combination using MMR balance
         const combos = [
             { tA: [candidates[0], candidates[1]], tB: [candidates[2], candidates[3]] },
             { tA: [candidates[0], candidates[2]], tB: [candidates[1], candidates[3]] },
@@ -560,8 +549,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         let minDiff = Infinity;
 
         combos.forEach(c => {
-            const sumA = getWeight((c.tA[0].profiles as any).skill_level) + getWeight((c.tA[1].profiles as any).skill_level);
-            const sumB = getWeight((c.tB[0].profiles as any).skill_level) + getWeight((c.tB[1].profiles as any).skill_level);
+            const sumA = getWeight(c.tA[0].profiles as any) + getWeight(c.tA[1].profiles as any);
+            const sumB = getWeight(c.tB[0].profiles as any) + getWeight(c.tB[1].profiles as any);
             const diff = Math.abs(sumA - sumB);
             if (diff < minDiff) {
                 minDiff = diff;
@@ -704,11 +693,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <Icon icon="solar:close-circle-linear" width={16} />
                                                                 </button>
                                                             </div>
-                                                            <div className="flex items-center gap-2 mt-0.5">
-                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: clr, color: 'white' }}>
-                                                                    {prof.skill_level || 'N/A'}
-                                                                </span>
-                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-900 text-white">
+                                                            <div className="flex items-center gap-2 mt-1">
+                                                                <RankBadge mmr={prof.mmr || 1000} size="sm" showMMR={false} />
+                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-900 text-white shadow-sm">
                                                                     {playerStats[prof.id]?.total || 0} เกม
                                                                 </span>
                                                             </div>
@@ -834,7 +821,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             .filter(ep => {
                                                                 const prof = ep.profiles as unknown as Profile;
                                                                 const matchesSearch = !searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase());
-                                                                return ep.is_checked_in && !ep.is_substitute && matchesSearch;
+                                                                return ep.is_checked_in && !ep.is_substitute && !prof?.is_guest && matchesSearch;
                                                             })
                                                             .sort((a, b) => (playerStats[a.user_id]?.total || 0) - (playerStats[b.user_id]?.total || 0))
                                                             .map((ep) => {
@@ -870,11 +857,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                 {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
                                                                             </div>
                                                                             <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight">{prof?.display_name}</p>
-                                                                                <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                                                                                    {prof.skill_level && (
-                                                                                        <span className="text-[10px] font-bold" style={{ color: skillColor }}>{prof.skill_level}</span>
-                                                                                    )}
+                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
+                                                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         {pstat?.total || 0} เกม
                                                                                     </span>
@@ -915,7 +900,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             .filter(ep => {
                                                                 const prof = ep.profiles as unknown as Profile;
                                                                 const matchesSearch = !searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase());
-                                                                return ep.is_checked_in && ep.is_substitute && matchesSearch;
+                                                                return ep.is_checked_in && ep.is_substitute && !prof?.is_guest && matchesSearch;
                                                             })
                                                             .sort((a, b) => (playerStats[a.user_id]?.total || 0) - (playerStats[b.user_id]?.total || 0))
                                                             .map((ep) => {
@@ -942,32 +927,82 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                             opacity: isDisabled ? 0.6 : inOther ? 0.5 : 1,
                                                                             cursor: isDisabled ? 'not-allowed' : 'pointer',
                                                                         }}>
+                                                                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                                                            <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                            <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                                                {pstat?.total || 0} เกม
+                                                                            </span>
+                                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 border border-blue-100">สำรอง</span>
+                                                                        </div>
+
+                                                                        {/* Right Side */}
+                                                                        {isPaid && !inThis ? (
+                                                                            <span className="flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-full shrink-0 shadow-sm border border-green-100" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+                                                                                <Icon icon="solar:check-circle-bold" width={14} />
+                                                                                จ่ายแล้ว
+                                                                            </span>
+                                                                        ) : inThis ? (
+                                                                            <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: clr, color: 'white' }}>
+                                                                                <Icon icon="solar:check-bold" width={14} />
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="w-5 h-5 rounded-full border-2 border-gray-200 shrink-0" />
+                                                                        )}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                    </div>
+                                                </div>
+
+                                                {/* Guest Players Section */}
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest px-2 mb-2">ขาจร ({players.filter(p => p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length})</p>
+                                                    <div className="space-y-2">
+                                                        {players
+                                                            .filter(ep => {
+                                                                const prof = ep.profiles as unknown as Profile;
+                                                                const matchesSearch = !searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase());
+                                                                return ep.is_checked_in && prof?.is_guest && matchesSearch;
+                                                            })
+                                                            .sort((a, b) => (playerStats[a.user_id]?.total || 0) - (playerStats[b.user_id]?.total || 0))
+                                                            .map((ep) => {
+                                                                const prof = ep.profiles as unknown as Profile;
+                                                                const team = sidebarTeam;
+                                                                const selected = team === 'A' ? teamA : teamB;
+                                                                const clr = team === 'A' ? 'var(--orange-500)' : '#3b82f6';
+                                                                const inThis = selected.includes(ep.user_id);
+                                                                const inOther = (team === 'A' ? teamB : teamA).includes(ep.user_id);
+                                                                const pstat = playerStats[ep.user_id];
+                                                                const isPaid = ep.payment_status === 'paid';
+                                                                const isDisabled = isPaid && !inThis;
+
+                                                                return (
+                                                                    <button key={ep.user_id} onClick={() => !isDisabled && togglePlayer(ep.user_id, team)}
+                                                                        className="w-full flex items-center justify-between p-3.5 rounded-xl border-2 text-left text-sm transition-all"
+                                                                        disabled={isDisabled}
+                                                                        style={{
+                                                                            background: isDisabled ? 'white' : inThis ? (team === 'A' ? 'rgba(249,115,22,0.04)' : 'rgba(59,130,246,0.04)') : 'white',
+                                                                            borderColor: inThis ? clr : 'transparent',
+                                                                            boxShadow: inThis ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
+                                                                            opacity: isDisabled ? 0.6 : inOther ? 0.5 : 1,
+                                                                            cursor: isDisabled ? 'not-allowed' : 'pointer',
+                                                                        }}>
                                                                         <div className="flex items-center gap-3.5 min-w-0 flex-1">
                                                                             <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 shadow-sm"
                                                                                 style={{
-                                                                                    background: inThis ? clr : 'var(--blue-500)',
+                                                                                    background: inThis ? clr : 'var(--purple-600)',
                                                                                     color: 'var(--white)'
                                                                                 }}>
-                                                                                {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
+                                                                                {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : <Icon icon="solar:ghost-bold" width={20} />}
                                                                             </div>
                                                                             <div className="min-w-0 pr-2">
-                                                                                <div className="flex items-center gap-2">
-                                                                                    <p className="font-bold text-gray-900 truncate tracking-tight">{prof?.display_name}</p>
-                                                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 border border-blue-100">สำรอง</span>
-                                                                                </div>
-                                                                                <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                                                                                    {prof.skill_level && (
-                                                                                        <span className="text-[10px] font-bold" style={{ color: skillColor }}>{prof.skill_level}</span>
-                                                                                    )}
+                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
+                                                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         {pstat?.total || 0} เกม
                                                                                     </span>
                                                                                     {inOther && <span className="text-[10px] font-medium text-red-500 bg-red-50 px-1.5 py-0.5 rounded">อยู่ทีม {team === 'A' ? 'B' : 'A'}</span>}
-                                                                                    {pstat?.playing && (
-                                                                                        <span className="text-[10px] font-medium text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
-                                                                                            ติดคิว
-                                                                                        </span>
-                                                                                    )}
                                                                                 </div>
                                                                             </div>
                                                                         </div>
@@ -1100,19 +1135,20 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         const ep = players.find(p => p.user_id === mp.user_id);
                                                         const isPaid = ep?.payment_status === 'paid';
                                                         return (
-                                                            <div key={mp.id} className="flex items-center justify-between">
-                                                                <p className="text-sm font-medium truncate" style={{
-                                                                    color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
-                                                                    fontWeight: isMe ? '900' : '500',
-                                                                    textShadow: isMe ? '0 0 1px rgba(249,115,22,0.3)' : 'none',
-                                                                }}>
-                                                                    {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
-                                                                </p>
-                                                                {isPaid && (
-                                                                    <span title="จ่ายแล้ว" className="flex shrink-0">
-                                                                        <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-500" />
-                                                                    </span>
-                                                                )}
+                                                            <div key={mp.id} className="py-2 border-b border-orange-100 last:border-0">
+                                                                <div className="flex items-center justify-between gap-2 mb-1">
+                                                                    <p className="text-sm font-bold truncate" style={{
+                                                                        color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
+                                                                    }}>
+                                                                        {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
+                                                                    </p>
+                                                                    {isPaid && (
+                                                                        <span title="จ่ายแล้ว" className="flex shrink-0">
+                                                                            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-500" />
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                             </div>
                                                         );
                                                     })}
@@ -1138,19 +1174,20 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         const ep = players.find(p => p.user_id === mp.user_id);
                                                         const isPaid = ep?.payment_status === 'paid';
                                                         return (
-                                                            <div key={mp.id} className="flex items-center justify-between">
-                                                                <p className="text-sm font-medium truncate" style={{
-                                                                    color: isMe ? '#2563eb' : 'var(--gray-900)',
-                                                                    fontWeight: isMe ? '900' : '500',
-                                                                    textShadow: isMe ? '0 0 1px rgba(59,130,246,0.3)' : 'none',
-                                                                }}>
-                                                                    {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
-                                                                </p>
-                                                                {isPaid && (
-                                                                    <span title="จ่ายแล้ว" className="flex shrink-0">
-                                                                        <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-500" />
-                                                                    </span>
-                                                                )}
+                                                            <div key={mp.id} className="py-2 border-b border-blue-100 last:border-0">
+                                                                <div className="flex items-center justify-between gap-2 mb-1">
+                                                                    <p className="text-sm font-bold truncate" style={{
+                                                                        color: isMe ? '#2563eb' : 'var(--gray-900)',
+                                                                    }}>
+                                                                        {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
+                                                                    </p>
+                                                                    {isPaid && (
+                                                                        <span title="จ่ายแล้ว" className="flex shrink-0">
+                                                                            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-500" />
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                             </div>
                                                         );
                                                     })}
@@ -1601,7 +1638,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             </div>,
                             document.body
                         )}
-                    </div>{/* end main content */}
+                    </div > {/* end main content */}
 
                     {/* Check-in Side Panel (inline) Add back the inactive sections as requested */}
                     {showPlayersSidebar && (
@@ -1687,22 +1724,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <Icon icon="solar:check-read-linear" width={14} />
                                                 </button>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className={`text-xs font-semibold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-orange-600'}`}>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-orange-600'}`}>
                                                             {prof?.display_name}
                                                         </p>
-                                                        {prof?.skill_level && (
-                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-                                                                style={{
-                                                                    background: `${getSkillColor(prof.skill_level)}15`,
-                                                                    color: getSkillColor(prof.skill_level),
-                                                                    border: `1px solid ${getSkillColor(prof.skill_level)}30`
-                                                                }}>
-                                                                {prof.skill_level}
-                                                            </span>
-                                                        )}
                                                     </div>
-                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
                                                             {pstat?.total || 0} เกม
                                                         </span>
@@ -1758,23 +1786,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <Icon icon="solar:check-read-linear" width={14} />
                                                 </button>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className={`text-xs font-semibold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-blue-600'}`}>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-blue-600'}`}>
                                                             {prof?.display_name}
                                                         </p>
-                                                        {prof?.skill_level && (
-                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-                                                                style={{
-                                                                    background: `${getSkillColor(prof.skill_level)}15`,
-                                                                    color: getSkillColor(prof.skill_level),
-                                                                    border: `1px solid ${getSkillColor(prof.skill_level)}30`
-                                                                }}>
-                                                                {prof.skill_level}
-                                                            </span>
-                                                        )}
                                                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f620', color: '#3b82f6' }}>สำรอง</span>
                                                     </div>
-                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
                                                             {pstat?.total || 0} เกม
                                                         </span>
@@ -1829,21 +1848,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <Icon icon="solar:ghost-bold" width={14} />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className={`text-xs font-semibold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-purple-600'}`}>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-purple-600'}`}>
                                                             {prof?.display_name}
                                                         </p>
-                                                        {prof?.skill_level && (
-                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-                                                                style={{
-                                                                    background: `${getSkillColor(prof.skill_level)}15`,
-                                                                    color: getSkillColor(prof.skill_level),
-                                                                    border: `1px solid ${getSkillColor(prof.skill_level)}30`
-                                                                }}>
-                                                                {prof.skill_level}
-                                                            </span>
-                                                        )}
                                                     </div>
+                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                 </div>
                                                 {isSelected ? (
                                                     <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
@@ -1870,18 +1880,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2">
+                                                    <div className="flex items-center gap-2 mb-1">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
-                                                        {prof?.skill_level && (
-                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-                                                                style={{
-                                                                    background: `${getSkillColor(prof.skill_level)}10`,
-                                                                    color: getSkillColor(prof.skill_level)
-                                                                }}>
-                                                                {prof.skill_level}
-                                                            </span>
-                                                        )}
                                                     </div>
+                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
                                             </div>
                                         );
@@ -1901,19 +1903,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2">
+                                                    <div className="flex items-center gap-2 mb-1">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
-                                                        {prof?.skill_level && (
-                                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
-                                                                style={{
-                                                                    background: `${getSkillColor(prof.skill_level)}10`,
-                                                                    color: getSkillColor(prof.skill_level)
-                                                                }}>
-                                                                {prof.skill_level}
-                                                            </span>
-                                                        )}
                                                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f610', color: '#3b82f6' }}>สำรอง</span>
                                                     </div>
+                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
                                             </div>
                                         );

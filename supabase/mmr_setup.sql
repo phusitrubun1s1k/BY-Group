@@ -35,7 +35,7 @@ DECLARE
     team_b_avg FLOAT;
     expected_a FLOAT;
     expected_b FLOAT;
-    k_factor INT := 32;
+    k_factor INT := 64;
     actual_a FLOAT;
     actual_b FLOAT;
     p_id UUID;
