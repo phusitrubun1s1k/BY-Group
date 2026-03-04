@@ -112,8 +112,7 @@ export default function LeaderboardPage() {
 
     // Sort data by active filter
     const sorted = [...data]
-        .sort((a, b) => (b[activeFilter] as number) - (a[activeFilter] as number))
-        .slice(0, 20);
+        .sort((a, b) => (b[activeFilter] as number) - (a[activeFilter] as number));
 
     const currentFilter = filters.find((f) => f.key === activeFilter)!;
 
@@ -151,22 +150,22 @@ export default function LeaderboardPage() {
                         🏆 เลเวลบอร์ดจัดอันดับ
                     </h1>
                     <p className="text-sm font-medium mb-6" style={{ color: 'var(--gray-500)' }}>
-                        Top 20 ลานประลองฝีมือของก๊วนเรา
+                        ลานประลองฝีมือของคนในก๊วนเราทั้งหมด
                     </p>
 
                     {/* Personal Rank Progress */}
-                    {myData && (
-                        <div className="mb-8 p-6 rounded-[32px] bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-xl relative overflow-hidden">
+                    {myFullData && (
+                        <div className="mb-8 p-6 rounded-[32px] bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-xl relative overflow-hidden ring-1 ring-white/10">
                             <div className="absolute top-0 right-0 w-48 h-48 bg-white/5 rounded-bl-full pointer-events-none" />
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 relative z-10">
                                 <div className="flex items-center gap-4">
-                                    <div className="w-14 h-14 rounded-2xl bg-orange-500 flex items-center justify-center text-2xl font-black shadow-lg border border-white/10">
-                                        {myData.display_name.charAt(0).toUpperCase()}
+                                    <div className="w-14 h-14 rounded-2xl bg-orange-500/10 flex items-center justify-center text-2xl font-black shadow-lg border border-orange-500/20 text-orange-500">
+                                        {myFullData.display_name.charAt(0).toUpperCase()}
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-black leading-none mb-1.5">{myData.display_name}</h2>
+                                        <h2 className="text-lg font-black leading-none mb-1.5">{myFullData.display_name}</h2>
                                         <div className="flex items-center gap-2">
-                                            <RankBadge mmr={myData.mmr || 1000} size="sm" showName={true} className="bg-white/10 border-white/10 text-white" />
+                                            <RankBadge mmr={myFullData.mmr || 1000} size="sm" showName={true} className="bg-white/10 border-white/10 text-white" />
                                             <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
                                                 อันดับของคุณ: {myFullRank > 0 ? `#${myFullRank}` : '-'}
                                             </span>
@@ -175,8 +174,12 @@ export default function LeaderboardPage() {
                                 </div>
 
                                 <div className="flex-1 max-w-sm">
+                                    <div className="flex justify-between items-end mb-2">
+                                        <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">{currentFilter.label} ของคุณ</span>
+                                        <span className="text-sm font-black text-orange-400">{getStatValue(myFullData)} <span className="text-[10px] font-bold text-white/40">{currentFilter.unit}</span></span>
+                                    </div>
                                     {(() => {
-                                        const { rank: nextRank, pointsNeeded, progress } = getNextRank(myData.mmr || 1000);
+                                        const { rank: nextRank, pointsNeeded, progress } = getNextRank(myFullData.mmr || 1000);
                                         return (
                                             <div className="space-y-2">
                                                 <div className="flex justify-between items-end">

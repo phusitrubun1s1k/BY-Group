@@ -500,6 +500,7 @@ export default function UserManagementPage() {
                                             { label: 'เกม', value: userDetailStats.totalGames, icon: 'solar:gamepad-bold-duotone', color: 'text-blue-500', bg: 'bg-blue-50' },
                                             { label: 'ชนะ', value: userDetailStats.wins, icon: 'solar:cup-star-bold-duotone', color: 'text-emerald-500', bg: 'bg-emerald-50' },
                                             { label: 'แพ้', value: userDetailStats.losses, icon: 'solar:sad-circle-bold-duotone', color: 'text-rose-500', bg: 'bg-rose-50' },
+                                            { label: 'Win Rate', value: `${userDetailStats.totalGames > 0 ? Math.round((userDetailStats.wins / userDetailStats.totalGames) * 100) : 0}%`, icon: 'solar:graph-up-bold-duotone', color: 'text-purple-500', bg: 'bg-purple-50' },
                                             { label: 'แต้ม', value: userDetailStats.totalPoints, icon: 'solar:star-bold-duotone', color: 'text-amber-500', bg: 'bg-amber-50' },
                                         ].map((stat, i) => (
                                             <div key={i} className="flex flex-col items-center justify-center p-3 rounded-2xl bg-white border border-gray-100 shadow-sm transition-all hover:border-blue-100">

@@ -302,6 +302,18 @@ export default function ProfilePage() {
         finally { setUploading(false); }
     };
 
+    const winRate = useMemo(() => {
+        if (stats.totalGames === 0) return 0;
+        return Math.round((stats.wins / stats.totalGames) * 100);
+    }, [stats]);
+
+    const mmrPoints = useMemo(() => {
+        if (mmrHistory.length === 0) return [];
+        // Extract 10 most recent rating values in chronological order
+        const recent = [...mmrHistory].slice(0, 15).reverse();
+        return recent.map(h => h.new_mmr);
+    }, [mmrHistory]);
+
     if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
 
     return (
@@ -455,6 +467,7 @@ export default function ProfilePage() {
                             { label: 'เกม', value: stats.totalGames, icon: 'solar:gamepad-bold-duotone', color: 'text-blue-500', bg: 'bg-blue-50' },
                             { label: 'ชนะ', value: stats.wins, icon: 'solar:cup-star-bold-duotone', color: 'text-emerald-500', bg: 'bg-emerald-50' },
                             { label: 'แพ้', value: stats.losses, icon: 'solar:sad-circle-bold-duotone', color: 'text-rose-500', bg: 'bg-rose-50' },
+                            { label: 'Win Rate', value: `${winRate}%`, icon: 'solar:graph-up-bold-duotone', color: 'text-purple-500', bg: 'bg-purple-50' },
                             { label: 'แต้ม', value: stats.totalPoints, icon: 'solar:star-bold-duotone', color: 'text-amber-500', bg: 'bg-amber-50' },
                         ].map((stat, i) => (
                             <div key={i} className="flex flex-col items-center justify-center p-3 sm:p-4 rounded-2xl border border-gray-100 bg-gray-50/50 hover:bg-gray-50 hover-scale transition-all">
@@ -483,6 +496,39 @@ export default function ProfilePage() {
                     </div>
                     <Icon icon="solar:alt-arrow-right-linear" width={20} className="ml-auto text-gray-400 group-hover:text-orange-500 transition-colors" />
                 </Link>
+            </div>
+
+            {/* MMR Growth Chart */}
+            <div className="card border-none shadow-md p-6 overflow-hidden relative">
+                <div className="flex items-center justify-between mb-8 relative z-10">
+                    <div>
+                        <h2 className="text-sm font-black tracking-tight uppercase text-gray-400 flex items-center gap-2">
+                            <Icon icon="solar:chart-2-bold" width={16} />
+                            พัฒนาการอันดับ (Rating Progress)
+                        </h2>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">อ้างอิงจากแมตช์ล่าสุด</p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-2xl font-black text-gray-900 leading-none">{profile?.mmr || 1000}</p>
+                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mt-1">Current MMR</p>
+                    </div>
+                </div>
+
+                {/* SVG Sparkline */}
+                <div className="h-40 w-full relative z-10">
+                    {mmrPoints.length > 1 ? (
+                        <Sparkline data={mmrPoints} color="var(--orange-500)" />
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-full gap-2 text-gray-300">
+                            <Icon icon="solar:chart-square-linear" width={40} />
+                            <p className="text-xs font-bold">ข้อมูลยังไม่เพียงพอสำหรับการสร้างกราฟ</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Background Decoration */}
+                <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-orange-500/5 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -top-10 -left-10 w-40 h-40 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
             </div>
 
             {/* MMR History Section */}
@@ -578,5 +624,59 @@ export default function ProfilePage() {
                 )}
             </div>
         </div >
+    );
+}
+
+function Sparkline({ data, color }: { data: number[], color: string }) {
+    const min = Math.min(...data) - 10;
+    const max = Math.max(...data) + 10;
+    const range = max - min;
+    const width = 500;
+    const height = 160;
+
+    const points = data.map((val, i) => ({
+        x: (i / (data.length - 1)) * width,
+        y: height - ((val - min) / range) * height
+    }));
+
+    const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+    const area = `${path} L ${width} ${height} L 0 ${height} Z`;
+
+    return (
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full preserve-3d overflow-visible">
+            <defs>
+                <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+                    <stop offset="100%" stopColor={color} stopOpacity="0" />
+                </linearGradient>
+            </defs>
+            {/* Fill Area */}
+            <path d={area} fill="url(#glow)" />
+            {/* Main Path */}
+            <path
+                d={path}
+                fill="none"
+                stroke={color}
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="drop-shadow-[0_0_8px_rgba(249,115,22,0.4)]"
+            />
+            {/* Data Points */}
+            {points.map((p, i) => (
+                <circle
+                    key={i}
+                    cx={p.x}
+                    cy={p.y}
+                    r="5"
+                    fill="white"
+                    stroke={color}
+                    strokeWidth="3"
+                    className="hover:r-8 transition-all cursor-pointer"
+                >
+                    <title>MMR: {data[i]}</title>
+                </circle>
+            ))}
+        </svg>
     );
 }

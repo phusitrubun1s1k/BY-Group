@@ -20,7 +20,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Bronze',
-        minMMR: 800,
+        minMMR: 1200,
         color: '#b45309',
         icon: 'solar:shield-bold',
         bg: 'bg-amber-50',
@@ -29,7 +29,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Silver',
-        minMMR: 1200,
+        minMMR: 1600,
         color: '#64748b',
         icon: 'solar:medal-star-bold',
         bg: 'bg-slate-50',
@@ -38,7 +38,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Gold',
-        minMMR: 1600,
+        minMMR: 2000,
         color: '#eab308',
         icon: 'solar:cup-star-bold',
         bg: 'bg-yellow-50',
@@ -47,7 +47,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Platinum',
-        minMMR: 2000,
+        minMMR: 2400,
         color: '#0ea5e9',
         icon: 'solar:crown-minimalistic-bold',
         bg: 'bg-sky-50',
@@ -56,7 +56,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Diamond',
-        minMMR: 2400,
+        minMMR: 2800,
         color: '#8b5cf6',
         icon: 'solar:magic-stick-3-bold',
         bg: 'bg-violet-50',
@@ -65,7 +65,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Master',
-        minMMR: 2800,
+        minMMR: 3200,
         color: '#f43f5e',
         icon: 'solar:fire-bold',
         bg: 'bg-rose-50',
@@ -74,7 +74,7 @@ export const RANK_TIERS: RankTier[] = [
     },
     {
         name: 'Grandmaster',
-        minMMR: 3200,
+        minMMR: 3600,
         color: '#fbbf24',
         icon: 'solar:crown-star-bold',
         bg: 'bg-amber-100',
