@@ -9,6 +9,8 @@ import { Icon } from '@iconify/react';
 import imageCompression from 'browser-image-compression';
 import QRCode from 'react-qr-code';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
+import RankBadge from '@/src/components/RankBadge';
+import { getNextRank } from '@/src/lib/rank-utils';
 
 const SKILL_OPTIONS: SelectOption[] = [
     { value: '', label: 'ไม่ระบุ', icon: 'solar:question-circle-linear' },
@@ -35,6 +37,22 @@ interface BillingHistory {
     games_played: number;
     payment_status: string;
     total_amount: number;
+}
+
+interface MMRHistory {
+    history_id: string;
+    user_id: string;
+    match_id: string;
+    old_mmr: number;
+    new_mmr: number;
+    change: number;
+    reason: string;
+    change_date: string;
+    team_a_score: number;
+    team_b_score: number;
+    event_name: string;
+    event_date: string;
+    result: 'Win' | 'Loss' | 'Draw';
 }
 
 // Helper to generate PromptPay QR Payload (EMVCo Standard)
@@ -100,6 +118,7 @@ export default function ProfilePage() {
         badge_marathon: boolean;
         badge_patron: boolean;
     }>({ badge_win_streak: false, badge_marathon: false, badge_patron: false });
+    const [mmrHistory, setMmrHistory] = useState<MMRHistory[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [showQR, setShowQR] = useState(false);
@@ -143,6 +162,12 @@ export default function ProfilePage() {
         const { data: badgeData } = await supabase.from('view_user_badges').select('*').eq('user_id', user.id).maybeSingle();
         if (badgeData) {
             setBadges(badgeData);
+        }
+
+        // Fetch MMR history
+        const { data: mmrData } = await supabase.from('view_mmr_history').select('*').eq('user_id', user.id).order('change_date', { ascending: false }).limit(20);
+        if (mmrData) {
+            setMmrHistory(mmrData as MMRHistory[]);
         }
 
         const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local timezone
@@ -361,9 +386,33 @@ export default function ProfilePage() {
                                         </span>
                                         {profile?.skill_level && (
                                             <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-orange-500/20 text-orange-300 border border-orange-500/20">
-                                                {profile.skill_level}
+                                                ระดับมือ {profile.skill_level}
                                             </span>
                                         )}
+                                        <RankBadge mmr={profile?.mmr || 1000} size="sm" />
+                                    </div>
+
+                                    {/* Rank Progression Bar */}
+                                    <div className="mt-4 max-w-[200px]">
+                                        {profile && (() => {
+                                            const { rank: nextRank, pointsNeeded, progress } = getNextRank(profile.mmr || 1000);
+                                            return (
+                                                <div className="space-y-1.5">
+                                                    <div className="flex justify-between items-end">
+                                                        <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">Rank Progression</span>
+                                                        {nextRank && (
+                                                            <span className="text-[9px] font-bold text-white/60">Next: {nextRank.name} ({pointsNeeded} pts)</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
+                                                        <div
+                                                            className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400 shadow-[0_0_8px_rgba(249,115,22,0.5)] transition-all duration-1000"
+                                                            style={{ width: `${progress}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                     <div className="flex flex-wrap gap-2 mt-4">
                                         {badges.badge_win_streak && (
@@ -434,6 +483,51 @@ export default function ProfilePage() {
                     </div>
                     <Icon icon="solar:alt-arrow-right-linear" width={20} className="ml-auto text-gray-400 group-hover:text-orange-500 transition-colors" />
                 </Link>
+            </div>
+
+            {/* MMR History Section */}
+            <div className="space-y-4">
+                <div className="flex items-center gap-2 px-1">
+                    <Icon icon="solar:history-bold" width={18} className="text-gray-400" />
+                    <h2 className="text-sm font-black tracking-tight uppercase text-gray-400">ประวัติอันดับ (Rating History)</h2>
+                </div>
+
+                <div className="card border-none shadow-md overflow-hidden" style={{ padding: 0 }}>
+                    <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
+                        {mmrHistory.map((h, i) => (
+                            <div key={i} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${h.change > 0 ? 'bg-emerald-50 text-emerald-600' : h.change < 0 ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}>
+                                        <Icon icon={h.change > 0 ? 'solar:trending-up-bold' : h.change < 0 ? 'solar:trending-down-bold' : 'solar:minus-circle-bold'} width={20} />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-xs font-black text-gray-900">
+                                                {h.change > 0 ? '+' : ''}{h.change} แต้ม
+                                            </p>
+                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'}`}>
+                                                {h.result === 'Win' ? 'Win' : h.result === 'Loss' ? 'Loss' : 'Draw'}
+                                            </span>
+                                        </div>
+                                        <p className="text-[10px] font-medium text-gray-400">
+                                            {h.event_name || 'Match'} • {new Date(h.change_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-sm font-black text-gray-900">{h.new_mmr}</p>
+                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Rating</p>
+                                </div>
+                            </div>
+                        ))}
+
+                        {mmrHistory.length === 0 && (
+                            <div className="p-10 text-center">
+                                <p className="text-xs font-bold text-gray-400">ยังไม่มีประวัติการแข่งที่บันทึกพอยต์</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {/* Billing History Section */}

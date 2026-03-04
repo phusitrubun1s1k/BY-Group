@@ -7,6 +7,7 @@ export interface Profile {
     phone: string | null;
     skill_level: 'เปาะแปะ' | 'BG' | 'N' | 'S' | 'P-' | 'P' | 'P+' | 'C' | 'B' | 'A' | null;
     is_guest: boolean;
+    mmr?: number;
     avatar_url: string | null;
     created_at: string;
 }

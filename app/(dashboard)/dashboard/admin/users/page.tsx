@@ -7,6 +7,7 @@ import { Icon } from '@iconify/react';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
+import RankBadge from '@/src/components/RankBadge';
 
 const SKILL_LEVELS = ['เปาะแปะ', 'BG', 'N', 'S', 'P-', 'P', 'P+', 'C', 'B', 'A'];
 
@@ -28,6 +29,7 @@ export default function UserManagementPage() {
     const [userDetailStats, setUserDetailStats] = useState({ totalGames: 0, wins: 0, losses: 0, totalPoints: 0 });
     const [userDetailBadges, setUserDetailBadges] = useState({ badge_win_streak: false, badge_marathon: false, badge_patron: false });
     const [userDetailHistory, setUserDetailHistory] = useState<any[]>([]);
+    const [userDetailMMRHistory, setUserDetailMMRHistory] = useState<any[]>([]);
     const [loadingDetail, setLoadingDetail] = useState(false);
 
     const confirm = useConfirm();
@@ -158,6 +160,10 @@ export default function UserManagementPage() {
             // Fetch badges
             const { data: badgeData } = await supabase.from('view_user_badges').select('*').eq('user_id', user.id).maybeSingle();
             if (badgeData) setUserDetailBadges(badgeData);
+
+            // Fetch MMR history
+            const { data: mmrData } = await supabase.from('view_mmr_history').select('*').eq('user_id', user.id).order('change_date', { ascending: false }).limit(10);
+            if (mmrData) setUserDetailMMRHistory(mmrData);
         } catch (err) {
             console.error('Error fetching user details:', err);
             toast.error('ไม่สามารถโหลดข้อมูลสถิติได้');
@@ -265,7 +271,8 @@ export default function UserManagementPage() {
                             <thead>
                                 <tr className="bg-gray-50/50 border-b border-gray-50">
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400">รูป/บทบาท</th>
-                                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400">ข้อมูลสมาชิก</th>
+                                    <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">ชื่อผู้ใช้</th>
+                                    <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Rank/MMR</th>
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-center">ระดับฝีมือ</th>
                                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-right">จัดการ</th>
                                 </tr>
@@ -291,11 +298,14 @@ export default function UserManagementPage() {
                                                 </span>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-bold text-gray-900">{user.display_name}</span>
-                                                <span className="text-[11px] font-medium text-gray-400">{user.email}</span>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex flex-col gap-0.5 min-w-[120px]">
+                                                <p className="text-sm font-bold text-gray-900">{user.display_name}</p>
+                                                <p className="text-[10px] font-medium text-gray-400 truncate max-w-[150px]">{user.email}</p>
                                             </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <RankBadge mmr={user.mmr || 1000} size="sm" />
                                         </td>
                                         <td className="px-6 py-4 text-center">
                                             <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-50 text-gray-600 border border-gray-100">
@@ -450,6 +460,7 @@ export default function UserManagementPage() {
                                                 ระดับ {selectedUserDetail.skill_level}
                                             </span>
                                         )}
+                                        <RankBadge mmr={selectedUserDetail.mmr || 1000} size="sm" />
                                     </div>
                                 </div>
                             </div>
@@ -526,11 +537,48 @@ export default function UserManagementPage() {
                                         </div>
                                     </div>
 
+                                    {/* MMR History */}
+                                    <div className="space-y-3">
+                                        <div className="flex items-center gap-2 px-1">
+                                            <Icon icon="solar:history-bold" width={16} className="text-gray-400" />
+                                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">ประวัติอันดับ (Rating History)</h3>
+                                        </div>
+                                        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
+                                            {userDetailMMRHistory.length > 0 ? userDetailMMRHistory.map((h, i) => (
+                                                <div key={i} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${h.change > 0 ? 'bg-emerald-50 text-emerald-600' : h.change < 0 ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}>
+                                                            <Icon icon={h.change > 0 ? 'solar:trending-up-bold' : h.change < 0 ? 'solar:trending-down-bold' : 'solar:minus-circle-bold'} width={16} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="flex items-center gap-2">
+                                                                <p className="text-[11px] font-black text-gray-900">{h.change > 0 ? '+' : ''}{h.change} แต้ม</p>
+                                                                <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'}`}>
+                                                                    {h.result}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-[9px] font-medium text-gray-400">
+                                                                {h.event_name || 'Match'} • {new Date(h.change_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-xs font-black text-gray-900">{h.new_mmr}</p>
+                                                        <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Rating</p>
+                                                    </div>
+                                                </div>
+                                            )) : (
+                                                <div className="p-8 text-center">
+                                                    <p className="text-[10px] font-bold text-gray-400">ยังไม่มีประวัติอันดับ</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
                                     {/* Billing History */}
                                     <div className="space-y-3">
                                         <div className="flex items-center justify-between px-1">
-                                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">ประวัติการเล่นล่าสุด</h3>
-                                            <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider">ดูทั้งหมด</span>
+                                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">ประวัติการชำระเงินล่าสุด</h3>
                                         </div>
                                         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
                                             {userDetailHistory.length > 0 ? userDetailHistory.map((item, i) => (

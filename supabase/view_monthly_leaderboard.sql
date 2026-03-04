@@ -1,10 +1,11 @@
 -- ============================================================
--- 🏸 Updated View — Leaderboard (Include MMR)
+-- 🏸 Updated View — Monthly Leaderboard (Include MMR)
 -- ============================================================
-CREATE OR REPLACE VIEW view_leaderboard AS
+CREATE OR REPLACE VIEW view_monthly_leaderboard AS
 WITH match_stats AS (
   SELECT 
     mp.user_id,
+    to_char(e.event_date, 'YYYY-MM') as month_key,
     COUNT(*) as total_games,
     SUM(CASE 
       WHEN (mp.team = 'A' AND m.team_a_score > m.team_b_score) 
@@ -19,13 +20,14 @@ WITH match_stats AS (
     SUM(CASE WHEN mp.team = 'A' THEN m.team_a_score ELSE m.team_b_score END) as total_points
   FROM match_players mp
   JOIN matches m ON m.id = mp.match_id
+  JOIN events e ON e.id = m.event_id
   WHERE m.status = 'finished'
-  GROUP BY mp.user_id
+  GROUP BY mp.user_id, to_char(e.event_date, 'YYYY-MM')
 ),
-shuttlecocks_per_event AS (
+shuttlecocks_per_month AS (
   SELECT
     mp.user_id,
-    m.event_id,
+    to_char(e.event_date, 'YYYY-MM') as month_key,
     SUM(
       CASE 
         WHEN jsonb_typeof(m.shuttlecock_numbers) = 'array' 
@@ -39,23 +41,26 @@ shuttlecocks_per_event AS (
     ) as shuttlecock_count
   FROM match_players mp
   JOIN matches m ON m.id = mp.match_id
+  JOIN events e ON e.id = m.event_id
   WHERE m.status IN ('finished', 'playing')
-  GROUP BY mp.user_id, m.event_id
+  GROUP BY mp.user_id, to_char(e.event_date, 'YYYY-MM')
 ),
-spending AS (
+monthly_spending AS (
   SELECT 
     ep.user_id,
+    to_char(e.event_date, 'YYYY-MM') as month_key,
     SUM(
-      e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0))
+      e.entry_fee + (e.shuttlecock_price * COALESCE(spm.shuttlecock_count, 0))
     ) as total_spent
   FROM event_players ep
   JOIN events e ON e.id = ep.event_id
-  LEFT JOIN shuttlecocks_per_event spe ON spe.user_id = ep.user_id AND spe.event_id = ep.event_id
+  LEFT JOIN shuttlecocks_per_month spm ON spm.user_id = ep.user_id AND spm.month_key = to_char(e.event_date, 'YYYY-MM')
   WHERE ep.payment_status = 'paid'
-  GROUP BY ep.user_id
+  GROUP BY ep.user_id, to_char(e.event_date, 'YYYY-MM')
 )
 SELECT 
   p.id as user_id,
+  ms.month_key,
   p.display_name,
   p.skill_level,
   p.mmr, -- <--- Added MMR
@@ -65,6 +70,6 @@ SELECT
   COALESCE(ms.total_points, 0)::bigint as total_points,
   COALESCE(s.total_spent, 0)::numeric as total_spent
 FROM profiles p
-LEFT JOIN match_stats ms ON ms.user_id = p.id
-LEFT JOIN spending s ON s.user_id = p.id
-WHERE p.is_guest = false; -- Shown for ALL registered members from day 1
+JOIN match_stats ms ON ms.user_id = p.id
+LEFT JOIN monthly_spending s ON s.user_id = p.id AND s.month_key = ms.month_key
+WHERE p.is_guest = false;
