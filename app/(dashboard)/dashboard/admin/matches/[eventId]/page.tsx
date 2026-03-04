@@ -1978,12 +1978,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     })}
 
                                     {/* 4. Not checked-in Substitutes */}
-                                    {players.filter(p => !p.is_checked_in && p.is_substitute).length > 0 && (
+                                    {players.filter(p => !p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
                                         <div className="px-3 py-1.5" style={{ background: 'rgba(59,130,246,0.03)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: '#3b82f6', opacity: 0.5 }}>ตัวสำรอง ({players.filter(p => !p.is_checked_in && p.is_substitute).length})</p>
+                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: '#3b82f6', opacity: 0.5 }}>ตัวสำรอง ({players.filter(p => !p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length})</p>
                                         </div>
                                     )}
-                                    {players.filter(p => !p.is_checked_in && p.is_substitute).map(ep => {
+                                    {players.filter(p => !p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
                                         const prof = ep.profiles as unknown as Profile;
                                         return (
                                             <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
@@ -1994,6 +1994,35 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     <div className="flex items-center gap-2 mb-1">
                                                         <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
                                                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f610', color: '#3b82f6' }}>สำรอง</span>
+                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                                                            มือ {prof?.skill_level || 'N/A'}
+                                                        </span>
+                                                    </div>
+                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
+                                                </div>
+                                                <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
+                                                    <Icon icon="solar:trash-bin-trash-bold" width={16} />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+
+                                    {/* 5. Not checked-in Guests */}
+                                    {players.filter(p => !p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length > 0 && (
+                                        <div className="px-3 py-1.5" style={{ background: 'rgba(147,51,234,0.03)' }}>
+                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--purple-600)', opacity: 0.5 }}>ขาจร (แขก) ({players.filter(p => !p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length})</p>
+                                        </div>
+                                    )}
+                                    {players.filter(p => !p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).map(ep => {
+                                        const prof = ep.profiles as unknown as Profile;
+                                        return (
+                                            <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
+                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
+                                                    style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
                                                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
                                                             มือ {prof?.skill_level || 'N/A'}
                                                         </span>
