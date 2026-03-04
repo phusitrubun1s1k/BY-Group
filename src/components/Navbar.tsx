@@ -24,6 +24,7 @@ const adminMenuItems = [
     { href: '/dashboard/admin/events', label: 'จัดการก๊วน', icon: 'solar:calendar-linear' },
     { href: '/dashboard/admin/matches', label: 'จัดแมตช์', icon: 'solar:sort-horizontal-linear' },
     { href: '/dashboard/admin/billing', label: 'จัดการเงิน', icon: 'solar:wallet-linear' },
+    { href: '/dashboard/admin/users', label: 'จัดการสมาชิก', icon: 'solar:users-group-rounded-linear' },
     { href: '/dashboard/history', label: 'ประวัติก๊วน', icon: 'solar:clock-circle-linear' },
 ];
 

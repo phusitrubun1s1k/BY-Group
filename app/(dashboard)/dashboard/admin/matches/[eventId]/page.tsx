@@ -8,6 +8,21 @@ import toast from 'react-hot-toast';
 import Link from 'next/link';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
+import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
+
+const GUEST_SKILL_OPTIONS: SelectOption[] = [
+    { value: '', label: '-- เลือกระดับ --', icon: 'solar:question-circle-linear' },
+    { value: 'เปาะแปะ', label: 'เปาะแปะ', icon: 'solar:user-linear' },
+    { value: 'BG', label: 'BG', icon: 'solar:user-bold' },
+    { value: 'N', label: 'N', icon: 'solar:user-bold-duotone' },
+    { value: 'S', label: 'S', icon: 'solar:medal-star-linear' },
+    { value: 'P-', label: 'P-', icon: 'solar:medal-star-bold' },
+    { value: 'P', label: 'P', icon: 'solar:cup-star-linear' },
+    { value: 'P+', label: 'P+', icon: 'solar:cup-star-bold' },
+    { value: 'C', label: 'C', icon: 'solar:crown-minimalistic-linear' },
+    { value: 'B', label: 'B', icon: 'solar:crown-bold' },
+    { value: 'A', label: 'A', icon: 'solar:crown-star-bold' },
+];
 
 // Get skill color from the function matching index.ts
 const getSkillColor = (level: string | null) => {
@@ -1296,8 +1311,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
                         {/* Score Modal — 2-Set + Winner */}
                         {scoreMatch && typeof document !== 'undefined' && createPortal(
-                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: 'rgba(0,0,0,0.3)' }} onClick={() => setScoreMatch(null)}>
-                                <div className="card w-full max-w-md animate-in shadow-xl" style={{ padding: '28px 32px' }} onClick={(e) => e.stopPropagation()}>
+                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={() => setScoreMatch(null)}>
+                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" />
+                                <div className="card w-full max-w-md animate-in shadow-xl relative z-10" style={{ padding: '28px 32px' }} onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center justify-between mb-5">
                                         <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>บันทึกคะแนน</h3>
                                         <button onClick={() => setScoreMatch(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
@@ -1427,7 +1443,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         {/* Add Shuttlecock Modal */}
                         {addingShuttlecockMatch && typeof document !== 'undefined' && createPortal(
                             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                                <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => !creating && setAddingShuttlecockMatch(null)} />
+                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => !creating && setAddingShuttlecockMatch(null)} />
                                 <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
                                     <div className="flex items-center gap-3 mb-4">
                                         <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(249,115,22,0.1)' }}>
@@ -1464,7 +1480,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         {/* Add Guest Modal */}
                         {showAddGuestModal && typeof document !== 'undefined' && createPortal(
                             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                                <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => !creating && setShowAddGuestModal(false)} />
+                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => !creating && setShowAddGuestModal(false)} />
                                 <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
 
                                     <div className="flex items-center gap-3 mb-4">
@@ -1490,21 +1506,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     </div>
 
                                     <div className="form-group mb-6">
-                                        <label className="text-xs font-bold mb-1.5 block" style={{ color: 'var(--gray-700)' }}>ระดับฝีมือ (ไม่บังคับ)</label>
-                                        <select
-                                            className="form-input"
+                                        <CustomSelect
+                                            label="ระดับฝีมือ (ไม่บังคับ)"
                                             value={guestSkill || ''}
-                                            onChange={(e) => setGuestSkill(e.target.value || null)}
-                                        >
-                                            <option value="">-- เลือกระดับ --</option>
-                                            <option value="S">S</option>
-                                            <option value="P-">P-</option>
-                                            <option value="P">P</option>
-                                            <option value="P+">P+</option>
-                                            <option value="C">C</option>
-                                            <option value="B">B</option>
-                                            <option value="A">A</option>
-                                        </select>
+                                            onChangeAction={(val) => setGuestSkill(val || null)}
+                                            options={GUEST_SKILL_OPTIONS}
+                                            icon="solar:medal-star-bold"
+                                        />
                                     </div>
 
                                     <div className="flex gap-2">
@@ -1521,7 +1529,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         {/* Add Player Modal */}
                         {showAddPlayerModal && typeof document !== 'undefined' && createPortal(
                             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                                <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => setShowAddPlayerModal(false)} />
+                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => setShowAddPlayerModal(false)} />
                                 <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
 
                                     <div className="flex items-center gap-3 mb-4">

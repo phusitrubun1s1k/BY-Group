@@ -8,6 +8,21 @@ import Link from 'next/link';
 import { Icon } from '@iconify/react';
 import imageCompression from 'browser-image-compression';
 import QRCode from 'react-qr-code';
+import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
+
+const SKILL_OPTIONS: SelectOption[] = [
+    { value: '', label: 'ไม่ระบุ', icon: 'solar:question-circle-linear' },
+    { value: 'เปาะแปะ', label: 'เปาะแปะ (ผู้เริ่มต้น)', icon: 'solar:user-linear', description: 'เพิ่งเริ่มหัดเล่น ยังไม่คุ้นชินกติกา' },
+    { value: 'BG', label: 'BG (ตีพอได้)', icon: 'solar:user-bold', description: 'ตีโต้ได้บ้าง เริ่มเข้าใจพื้นฐาน' },
+    { value: 'N', label: 'N (ตีได้/รับลูกกระเจิง)', icon: 'solar:user-bold-duotone', description: 'เริ่มตีได้แรงขึ้น วิ่งรับลูกได้' },
+    { value: 'S', label: 'S (หัดลงเกมส์)', icon: 'solar:medal-star-linear', description: 'เริ่มลงทีม มีทักษะการวางลูก' },
+    { value: 'P-', label: 'P- (ลงเกมส์บ่อย/รู้กติกา)', icon: 'solar:medal-star-bold', description: 'ลงเกมส์ประจำ เข้าใจตำแหน่ง' },
+    { value: 'P', label: 'P (ตีประจำ/บุกรับได้หนืดๆ)', icon: 'solar:cup-star-linear', description: 'ฝีมือมาตรฐาน รับลูกได้ดี บุกได้' },
+    { value: 'P+', label: 'P+ (ฝีมือดี/ร่างกายแข็งแรง)', icon: 'solar:cup-star-bold', description: 'บุกโหด รับเหนียว มีพละกำลัง' },
+    { value: 'C', label: 'C (เก่งมาก/แข่งขันระดับคลับ)', icon: 'solar:crown-minimalistic-linear', description: 'ระดับนักกีฬาคลับ แข่งขันบ่อย' },
+    { value: 'B', label: 'B (นักกีฬาเกรด B)', icon: 'solar:crown-bold', description: 'นักกีฬาเกรด B ฝีมือสูง' },
+    { value: 'A', label: 'A (นักกีฬาเกรด A/อาชีพ)', icon: 'solar:crown-star-bold', description: 'นักกีฬาอาชีพ หรือเกรด A' },
+];
 
 interface BillingHistory {
     user_id: string;
@@ -310,24 +325,13 @@ export default function ProfilePage() {
                                     </div>
                                     <div className="flex items-center gap-3 pt-2">
                                         <div className="flex-1">
-                                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ระดับมือ</label>
-                                            <select
+                                            <CustomSelect
+                                                label="ระดับมือ"
                                                 value={editForm.skill_level}
-                                                onChange={e => setEditForm(f => ({ ...f, skill_level: e.target.value }))}
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-white/40"
-                                            >
-                                                <option value="" className="text-gray-900">ไม่ระบุ</option>
-                                                <option value="เปาะแปะ" className="text-gray-900">เปาะแปะ (ผู้เริ่มต้น)</option>
-                                                <option value="BG" className="text-gray-900">BG (ตีพอได้)</option>
-                                                <option value="N" className="text-gray-900">N (ตีได้/รับลูกกระเจิง)</option>
-                                                <option value="S" className="text-gray-900">S (หัดลงเกมส์)</option>
-                                                <option value="P-" className="text-gray-900">P- (ลงเกมส์บ่อย/รู้กติกา)</option>
-                                                <option value="P" className="text-gray-900">P (ตีประจำ/บุกรับได้หนืดๆ)</option>
-                                                <option value="P+" className="text-gray-900">P+ (ฝีมือดี/ร่างกายแข็งแรง)</option>
-                                                <option value="C" className="text-gray-900">C (เก่งมาก/แข่งขันระดับคลับ)</option>
-                                                <option value="B" className="text-gray-900">B (นักกีฬาเกรด B)</option>
-                                                <option value="A" className="text-gray-900">A (นักกีฬาเกรด A/อาชีพ)</option>
-                                            </select>
+                                                onChangeAction={(val) => setEditForm(f => ({ ...f, skill_level: val }))}
+                                                options={SKILL_OPTIONS}
+                                                icon="solar:medal-star-bold"
+                                            />
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/10">
