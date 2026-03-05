@@ -48,12 +48,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [shuttlecockNumber, setShuttlecockNumber] = useState('');
     const [creating, setCreating] = useState(false);
     const [scoreMatch, setScoreMatch] = useState<Match | null>(null);
-    // 2-set score state
-    const [set1A, setSet1A] = useState('');
-    const [set1B, setSet1B] = useState('');
-    const [set2A, setSet2A] = useState('');
-    const [set2B, setSet2B] = useState('');
-    const [winner, setWinner] = useState<'A' | 'B' | null>(null);
+    const [winner, setWinner] = useState<'A' | 'B' | 'Draw' | null>(null);
+
+    // Reset winner when score modal opens/closes
+    useEffect(() => {
+        if (scoreMatch) setWinner(null);
+    }, [scoreMatch]);
+
     const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
     const [updatingPayment, setUpdatingPayment] = useState<string | null>(null);
     const [showPaymentSection, setShowPaymentSection] = useState(true);
@@ -428,7 +429,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const updateMatchStatus = async (matchId: string, status: 'playing' | 'finished') => {
         if (status === 'finished') {
             const m = matches.find((x) => x.id === matchId);
-            if (m) { setScoreMatch(m); setSet1A(''); setSet1B(''); setSet2A(''); setSet2B(''); setWinner(null); }
+            if (m) { setScoreMatch(m); setWinner(null); }
             return;
         }
         if (status === 'playing') {
@@ -447,46 +448,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         loadData(eventId);
     };
 
-    // Auto-determine winner when scores change
-    const autoDetectWinner = (s1a: string, s1b: string, s2a: string, s2b: string) => {
-        const a1 = parseInt(s1a) || 0;
-        const b1 = parseInt(s1b) || 0;
-        const a2 = parseInt(s2a) || 0;
-        const b2 = parseInt(s2b) || 0;
-
-        let setsWonA = 0;
-        let setsWonB = 0;
-        if (a1 > 0 || b1 > 0) { if (a1 > b1) setsWonA++; else if (b1 > a1) setsWonB++; }
-        if (a2 > 0 || b2 > 0) { if (a2 > b2) setsWonA++; else if (b2 > a2) setsWonB++; }
-
-        if (setsWonA > setsWonB) setWinner('A');
-        else if (setsWonB > setsWonA) setWinner('B');
-        else if (setsWonA === setsWonB && (a1 > 0 || b1 > 0 || a2 > 0 || b2 > 0)) {
-            // Tiebreak by total points
-            if ((a1 + a2) > (b1 + b2)) setWinner('A');
-            else if ((b1 + b2) > (a1 + a2)) setWinner('B');
-            else setWinner(null); // Draw
-        } else {
-            setWinner(null);
-        }
-    };
-
-    const handleSetScore = (setter: (v: string) => void, value: string, s1a: string, s1b: string, s2a: string, s2b: string, which: string) => {
-        let val = value;
-        if (parseInt(value) > 30) val = '30';
-        setter(val);
-        // Build updated values
-        const vals = { s1a, s1b, s2a, s2b, [which]: val };
-        autoDetectWinner(vals.s1a, vals.s1b, vals.s2a, vals.s2b);
-    };
 
     const submitScore = async () => {
         if (!scoreMatch) return;
-        if (!set1A || !set1B) { toast.error('กรอกคะแนนอย่างน้อยเซตที่ 1'); return; }
+        if (!winner) { toast.error('กรุณาเลือกผลการแข่งขัน'); return; }
 
-        const totalA = (parseInt(set1A) || 0) + (parseInt(set2A) || 0);
-        const totalB = (parseInt(set1B) || 0) + (parseInt(set2B) || 0);
-        const isDraw = totalA === totalB;
+        const isDraw = winner === 'Draw';
+        const totalA = isDraw ? 1 : (winner === 'A' ? 1 : 0);
+        const totalB = isDraw ? 1 : (winner === 'B' ? 1 : 0);
 
         const ok = await confirm({
             title: 'บันทึกคะแนน?',
@@ -495,8 +464,6 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             confirmText: 'บันทึกคะแนน'
         });
         if (!ok) return;
-
-
 
         const supabase = createClient();
         await supabase.from('matches').update({
@@ -1180,7 +1147,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 )}
                                             </div>
                                             <div className="flex items-center gap-3">
-                                                <div className="flex-1 p-3 rounded-xl" style={{
+                                                <div className="flex-1 p-3 rounded-xl min-w-0" style={{
                                                     background: aWon ? 'rgba(249,115,22,0.06)' : 'rgba(249,115,22,0.03)',
                                                     border: `1.5px solid ${aWon ? 'var(--orange-500)' : 'rgba(249,115,22,0.1)'}`,
                                                 }}>
@@ -1194,8 +1161,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         const ep = players.find(p => p.user_id === mp.user_id);
                                                         const isPaid = ep?.payment_status === 'paid';
                                                         return (
-                                                            <div key={mp.id} className="py-2 border-b border-orange-100 last:border-0">
-                                                                <div className="flex items-center justify-between gap-2 mb-1">
+                                                            <div key={mp.id} className="py-2 border-b border-orange-100 last:border-0 min-w-0">
+                                                                <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
                                                                     }}>
@@ -1219,7 +1186,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         <span className="text-[10px] font-black tracking-tighter text-indigo-400">VS</span>
                                                     )}
                                                 </div>
-                                                <div className="flex-1 p-3 rounded-xl" style={{
+                                                <div className="flex-1 p-3 rounded-xl min-w-0" style={{
                                                     background: bWon ? 'rgba(59,130,246,0.06)' : 'rgba(59,130,246,0.03)',
                                                     border: `1.5px solid ${bWon ? '#3b82f6' : 'rgba(59,130,246,0.1)'}`,
                                                 }}>
@@ -1233,8 +1200,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         const ep = players.find(p => p.user_id === mp.user_id);
                                                         const isPaid = ep?.payment_status === 'paid';
                                                         return (
-                                                            <div key={mp.id} className="py-2 border-b border-blue-100 last:border-0">
-                                                                <div className="flex items-center justify-between gap-2 mb-1">
+                                                            <div key={mp.id} className="py-2 border-b border-blue-100 last:border-0 min-w-0">
+                                                                <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? '#2563eb' : 'var(--gray-900)',
                                                                     }}>
@@ -1417,120 +1384,69 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         </button>
                                     </div>
 
-                                    {/* Team Names */}
-                                    <div className="grid grid-cols-[1fr_auto_1fr] gap-2 mb-4">
-                                        <p className="text-sm font-bold text-center" style={{ color: 'var(--orange-500)' }}>ทีม A</p>
-                                        <div />
-                                        <p className="text-sm font-bold text-center" style={{ color: '#3b82f6' }}>ทีม B</p>
-                                    </div>
-
-                                    {/* Set 1 */}
-                                    <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-3">
-                                        <input
-                                            type="number" min="0" max="30" placeholder="0"
-                                            className="form-input form-input-plain text-center text-xl font-bold"
-                                            value={set1A}
-                                            onChange={(e) => handleSetScore(setSet1A, e.target.value, e.target.value, set1B, set2A, set2B, 's1a')}
-                                        />
-                                        <span className="text-xs font-bold px-2" style={{ color: 'var(--gray-400)' }}>เซต 1</span>
-                                        <input
-                                            type="number" min="0" max="30" placeholder="0"
-                                            className="form-input form-input-plain text-center text-xl font-bold"
-                                            value={set1B}
-                                            onChange={(e) => handleSetScore(setSet1B, e.target.value, set1A, e.target.value, set2A, set2B, 's1b')}
-                                        />
-                                    </div>
-
-                                    {/* Set 2 */}
-                                    <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-4">
-                                        <input
-                                            type="number" min="0" max="30" placeholder="0"
-                                            className="form-input form-input-plain text-center text-xl font-bold"
-                                            value={set2A}
-                                            onChange={(e) => handleSetScore(setSet2A, e.target.value, set1A, set1B, e.target.value, set2B, 's2a')}
-                                        />
-                                        <span className="text-xs font-bold px-2" style={{ color: 'var(--gray-400)' }}>เซต 2</span>
-                                        <input
-                                            type="number" min="0" max="30" placeholder="0"
-                                            className="form-input form-input-plain text-center text-xl font-bold"
-                                            value={set2B}
-                                            onChange={(e) => handleSetScore(setSet2B, e.target.value, set1A, set1B, set2A, e.target.value, 's2b')}
-                                        />
-                                    </div>
-
-                                    {/* Divider */}
-                                    <div className="h-px mb-4" style={{ background: 'var(--gray-200)' }} />
-
-                                    {/* Total & Winner */}
-                                    <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-4">
-                                        <div className="text-center py-2 rounded-xl" style={{
-                                            background: winner === 'A' ? 'rgba(249,115,22,0.08)' : 'var(--gray-50)',
-                                            border: `2px solid ${winner === 'A' ? 'var(--orange-500)' : 'var(--gray-200)'}`,
-                                        }}>
-                                            <p className="text-2xl font-extrabold" style={{ color: winner === 'A' ? 'var(--orange-500)' : 'var(--gray-900)' }}>
-                                                {(parseInt(set1A) || 0) + (parseInt(set2A) || 0)}
-                                            </p>
-                                            <p className="text-[10px] font-semibold" style={{ color: 'var(--gray-500)' }}>รวม</p>
-                                        </div>
-                                        <div className="text-center px-2">
-                                            {winner ? (
-                                                <div className="flex flex-col items-center">
-                                                    <Icon icon="solar:cup-star-bold" width={20} style={{ color: winner === 'A' ? 'var(--orange-500)' : '#3b82f6' }} />
-                                                    <span className="text-[10px] font-bold mt-0.5" style={{ color: winner === 'A' ? 'var(--orange-500)' : '#3b82f6' }}>ชนะ!</span>
+                                    {/* Result Selector */}
+                                    <div className="flex flex-col gap-4 mb-8">
+                                        <div className="flex gap-3">
+                                            <button
+                                                onClick={() => setWinner(winner === 'A' ? null : 'A')}
+                                                className="flex-1 p-5 rounded-2xl flex flex-col items-center gap-2 transition-all duration-200 border-2 shadow-sm hover:shadow-md group"
+                                                style={{
+                                                    background: winner === 'A' ? 'var(--orange-500)' : 'white',
+                                                    color: winner === 'A' ? 'white' : 'var(--orange-500)',
+                                                    borderColor: 'var(--orange-500)',
+                                                    transform: winner === 'A' ? 'scale(1.02)' : 'none',
+                                                }}
+                                            >
+                                                <div className={`p-3 rounded-full transition-colors ${winner === 'A' ? 'bg-white/20' : 'bg-orange-50'}`}>
+                                                    <Icon icon={winner === 'A' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={32} />
                                                 </div>
-                                            ) : ((parseInt(set1A) || 0) + (parseInt(set2A) || 0)) === ((parseInt(set1B) || 0) + (parseInt(set2B) || 0)) && (parseInt(set1A) || parseInt(set1B)) ? (
-                                                <div className="flex flex-col items-center">
-                                                    <Icon icon="solar:hand-shake-bold" width={22} className="text-purple-500" />
-                                                    <span className="text-[10px] font-bold mt-0.5 text-purple-600">เสมอ</span>
-                                                </div>
-                                            ) : (
-                                                <div className="px-2 py-0.5 rounded-full bg-slate-50 border border-slate-100">
-                                                    <span className="text-[10px] font-black tracking-tighter text-indigo-400">VS</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div className="text-center py-2 rounded-xl" style={{
-                                            background: winner === 'B' ? 'rgba(59,130,246,0.08)' : 'var(--gray-50)',
-                                            border: `2px solid ${winner === 'B' ? '#3b82f6' : 'var(--gray-200)'}`,
-                                        }}>
-                                            <p className="text-2xl font-extrabold" style={{ color: winner === 'B' ? '#3b82f6' : 'var(--gray-900)' }}>
-                                                {(parseInt(set1B) || 0) + (parseInt(set2B) || 0)}
-                                            </p>
-                                            <p className="text-[10px] font-semibold" style={{ color: 'var(--gray-500)' }}>รวม</p>
-                                        </div>
-                                    </div>
+                                                <span className="font-extrabold text-sm uppercase tracking-tight">ทีม A ชนะ</span>
+                                            </button>
 
-                                    {/* Manual Winner Override */}
-                                    <div className="flex gap-2 mb-5">
+                                            <button
+                                                onClick={() => setWinner(winner === 'B' ? null : 'B')}
+                                                className="flex-1 p-5 rounded-2xl flex flex-col items-center gap-2 transition-all duration-200 border-2 shadow-sm hover:shadow-md group"
+                                                style={{
+                                                    background: winner === 'B' ? '#3b82f6' : 'white',
+                                                    color: winner === 'B' ? 'white' : '#3b82f6',
+                                                    borderColor: '#3b82f6',
+                                                    transform: winner === 'B' ? 'scale(1.02)' : 'none',
+                                                }}
+                                            >
+                                                <div className={`p-3 rounded-full transition-colors ${winner === 'B' ? 'bg-white/20' : 'bg-blue-50'}`}>
+                                                    <Icon icon={winner === 'B' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={32} />
+                                                </div>
+                                                <span className="font-extrabold text-sm uppercase tracking-tight">ทีม B ชนะ</span>
+                                            </button>
+                                        </div>
+
                                         <button
-                                            onClick={() => setWinner(winner === 'A' ? null : 'A')}
-                                            className="flex-1 btn btn-sm justify-center"
+                                            onClick={() => setWinner(winner === 'Draw' ? null : 'Draw')}
+                                            className="w-full p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-md"
                                             style={{
-                                                background: winner === 'A' ? 'var(--orange-500)' : 'transparent',
-                                                color: winner === 'A' ? 'var(--white)' : 'var(--gray-600)',
-                                                border: `1.5px solid ${winner === 'A' ? 'var(--orange-500)' : 'var(--gray-200)'}`,
+                                                background: winner === 'Draw' ? '#9333ea' : 'white',
+                                                color: winner === 'Draw' ? 'white' : '#9333ea',
+                                                borderColor: '#9333ea',
+                                                transform: winner === 'Draw' ? 'scale(1.01)' : 'none',
                                             }}
                                         >
-                                            {winner === 'A' && <Icon icon="solar:check-circle-bold" width={16} />}
-                                            ทีม A ชนะ
-                                        </button>
-                                        <button
-                                            onClick={() => setWinner(winner === 'B' ? null : 'B')}
-                                            className="flex-1 btn btn-sm justify-center"
-                                            style={{
-                                                background: winner === 'B' ? '#3b82f6' : 'transparent',
-                                                color: winner === 'B' ? 'var(--white)' : 'var(--gray-600)',
-                                                border: `1.5px solid ${winner === 'B' ? '#3b82f6' : 'var(--gray-200)'}`,
-                                            }}
-                                        >
-                                            {winner === 'B' && <Icon icon="solar:check-circle-bold" width={16} />}
-                                            ทีม B ชนะ
+                                            <div className={`p-2 rounded-full ${winner === 'Draw' ? 'bg-white/20' : 'bg-purple-50'}`}>
+                                                <Icon icon={winner === 'Draw' ? 'solar:hand-shake-bold' : 'solar:hand-shake-linear'} width={24} />
+                                            </div>
+                                            <span className="font-bold">เสมอ (Draw)</span>
                                         </button>
                                     </div>
 
-                                    <button onClick={submitScore} className="btn btn-primary w-full">
-                                        <Icon icon="solar:check-circle-linear" width={18} />
-                                        บันทึกคะแนน
+                                    <button
+                                        onClick={submitScore}
+                                        disabled={!winner}
+                                        className={`btn w-full py-4 rounded-xl text-lg font-bold shadow-lg transition-all ${winner
+                                            ? 'btn-primary shadow-orange-200 active:scale-95'
+                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                    >
+                                        <Icon icon="solar:check-circle-linear" width={22} />
+                                        บันทึกผลการแข่งขัน
                                     </button>
                                 </div>
                             </div>,
