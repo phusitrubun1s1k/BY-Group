@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/src/lib/supabase/client';
 import { Icon } from '@iconify/react';
+import Link from 'next/link';
 import RankBadge from '@/src/components/RankBadge';
 import { getNextRank, RANK_TIERS } from '@/src/lib/rank-utils';
 
@@ -19,13 +20,12 @@ interface LeaderboardEntry {
     achievements?: { name: string; icon: string }[];
 }
 
-type FilterKey = 'total_games' | 'total_wins' | 'total_points' | 'total_spent';
+type FilterKey = 'mmr' | 'total_games' | 'total_wins' | 'total_spent';
 
 const filters: { key: FilterKey; label: string; icon: string; emoji: string; unit: string }[] = [
-    { key: 'mmr' as any, label: 'อันดับ Rank', icon: 'solar:crown-star-bold', emoji: '⭐', unit: 'คะแนน' },
+    { key: 'mmr', label: 'อันดับ Rank', icon: 'solar:crown-star-bold', emoji: '⭐', unit: 'คะแนน' },
     { key: 'total_wins', label: 'ชนะเยอะสุด', icon: 'solar:cup-star-linear', emoji: '🏆', unit: 'ชนะ' },
     { key: 'total_games', label: 'เล่นบ่อยสุด', icon: 'solar:shuttlecock-linear', emoji: '🏸', unit: 'เกม' },
-    { key: 'total_points', label: 'แต้มรวมสูงสุด', icon: 'solar:fire-linear', emoji: '🔥', unit: 'แต้ม' },
     { key: 'total_spent', label: 'สายเปย์', icon: 'solar:wallet-money-linear', emoji: '💸', unit: '฿' },
 ];
 
@@ -114,7 +114,7 @@ export default function LeaderboardPage() {
     const sorted = [...data]
         .sort((a, b) => (b[activeFilter] as number) - (a[activeFilter] as number));
 
-    const currentFilter = filters.find((f) => f.key === activeFilter)!;
+    const currentFilter = filters.find((f) => f.key === activeFilter) || filters[0];
 
     // My rank
     const myRank = sorted.findIndex((p) => p.user_id === currentUserId) + 1;
@@ -331,39 +331,40 @@ export default function LeaderboardPage() {
                                                 <span className="text-sm font-bold" style={{ color: 'var(--gray-400)' }}>{rank}</span>
                                             </div>
 
-                                            {/* Avatar */}
-                                            <div
-                                                className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
-                                                style={{ background: 'var(--gray-900)', color: 'var(--white)' }}
+                                            {/* Avatar + Name - Linked to Profile */}
+                                            <Link
+                                                href={isMe ? "/dashboard/profile" : `/dashboard/profile/${entry.user_id}`}
+                                                className="flex flex-1 items-center gap-3 sm:gap-4 min-w-0 group"
                                             >
-                                                {entry.display_name.charAt(0).toUpperCase()}
-                                            </div>
-
-                                            {/* Name + Skill */}
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-1.5 flex-wrap">
-                                                    <p className="text-sm font-bold truncate" style={{ color: 'var(--gray-900)' }}>
-                                                        {entry.display_name}
-                                                    </p>
-                                                    {isMe && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-600">คุณ</span>}
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                        {entry.achievements?.map((ach, i) => (
-                                                            <span key={i} title={ach.name} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${ach.name === 'ชนะติดต่อกัน 3 เกม' ? 'bg-orange-50 text-orange-600' : ach.name === 'เล่นครบ 100 เกม' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                <Icon
-                                                                    icon={ach.icon}
-                                                                    width={12}
-                                                                />
-                                                                <span>{ach.name}</span>
-                                                            </span>
-                                                        ))}
-                                                    </div>
+                                                <div
+                                                    className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-transform group-hover:scale-105"
+                                                    style={{ background: 'var(--gray-900)', color: 'var(--white)' }}
+                                                >
+                                                    {entry.display_name.charAt(0).toUpperCase()}
                                                 </div>
-                                                {entry.skill_level && (
-                                                    <span className="text-[11px] font-semibold" style={{ color: skillColors[entry.skill_level] || 'var(--gray-500)' }}>
-                                                        {entry.skill_level}
-                                                    </span>
-                                                )}
-                                            </div>
+
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <p className="text-sm font-bold truncate group-hover:text-orange-500 transition-colors" style={{ color: 'var(--gray-900)' }}>
+                                                            {entry.display_name}
+                                                        </p>
+                                                        {isMe && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-600">คุณ</span>}
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            {entry.achievements?.map((ach, i) => (
+                                                                <span key={i} title={ach.name} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${ach.name === 'ชนะติดต่อกัน 3 เกม' ? 'bg-orange-50 text-orange-600' : ach.name === 'เล่นครบ 100 เกม' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                                                    <Icon icon={ach.icon} width={12} />
+                                                                    <span>{ach.name}</span>
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    {entry.skill_level && (
+                                                        <span className="text-[11px] font-semibold" style={{ color: skillColors[entry.skill_level] || 'var(--gray-500)' }}>
+                                                            {entry.skill_level}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </Link>
 
                                             {/* Rank Badge in List */}
                                             <div className="shrink-0">
@@ -493,8 +494,9 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
     const config = podiumConfig[rank];
 
     return (
-        <div
-            className={`${config.height} card flex flex-col items-center justify-center text-center relative overflow-hidden transition-all duration-300 hover:scale-[1.02] shadow-2xl`}
+        <Link
+            href={isMe ? "/dashboard/profile" : `/dashboard/profile/${entry.user_id}`}
+            className={`${config.height} card flex flex-col items-center justify-center text-center relative overflow-hidden transition-all duration-300 hover:scale-[1.02] shadow-2xl group`}
             style={{
                 background: config.bg,
                 border: config.border,
@@ -518,7 +520,7 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
             {/* Avatar Section */}
             <div className="relative mb-4">
                 <div
-                    className={`${config.avatarSize} rounded-full flex items-center justify-center font-black shadow-2xl border-4 border-white relative z-0`}
+                    className={`${config.avatarSize} rounded-full flex items-center justify-center font-black shadow-2xl border-4 border-white relative z-0 group-hover:scale-105 transition-transform`}
                     style={{
                         background: rank === 1 ? 'linear-gradient(135deg, #fbbf24, #f59e0b)' : rank === 2 ? 'linear-gradient(135deg, #94a3b8, #64748b)' : 'linear-gradient(135deg, #d97706, #92400e)',
                         color: 'var(--white)',
@@ -535,7 +537,7 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
 
             {/* User Info */}
             <div className="flex flex-col items-center gap-1 w-full max-w-full">
-                <p className={`${config.textSize} font-black truncate w-full tracking-tight px-1`} style={{ color: 'var(--gray-900)' }}>
+                <p className={`${config.textSize} font-black truncate w-full tracking-tight px-1 group-hover:text-orange-500 transition-colors`} style={{ color: 'var(--gray-900)' }}>
                     {entry.display_name}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1">
@@ -563,6 +565,6 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
                     {unit}
                 </p>
             </div>
-        </div>
+        </Link>
     );
 }

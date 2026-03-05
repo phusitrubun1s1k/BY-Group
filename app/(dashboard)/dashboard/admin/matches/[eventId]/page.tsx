@@ -116,8 +116,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                 }
             });
 
-            const amount = (event.entry_fee || 0) + ((event.shuttlecock_price || 0) * totalShuttles);
-            bills[p.user_id] = amount;
+            const amount = (event.entry_fee || 0) + ((event.shuttlecock_price || 0) * totalShuttles) - (p.discount || 0);
+            bills[p.user_id] = Math.max(0, amount);
         });
         return bills;
     }, [players, matches, event]);
@@ -155,8 +155,50 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         });
         return used;
     }, [matches, editingMatchId]);
+    // Cleanup guest profiles from PREVIOUS events (preserve billing data)
+    const cleanupOldGuests = useCallback(async (currentEventId: string) => {
+        const supabase = createClient();
 
-    useEffect(() => { params.then((p) => { setEventId(p.eventId); loadData(p.eventId); }); }, [params]);
+        // 1. Find all guest profiles
+        const { data: allGuests, error: fetchErr } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('is_guest', true);
+
+        if (fetchErr || !allGuests || allGuests.length === 0) return;
+
+        // 2. Find which guests are in the CURRENT event
+        const { data: currentEventPlayers } = await supabase
+            .from('event_players')
+            .select('user_id')
+            .eq('event_id', currentEventId);
+
+        const currentEventUserIds = new Set((currentEventPlayers || []).map(ep => ep.user_id));
+
+        // 3. Filter to only guests NOT in the current event
+        const oldGuestIds = allGuests
+            .filter(g => !currentEventUserIds.has(g.id))
+            .map(g => g.id);
+
+        if (oldGuestIds.length === 0) return;
+
+        // 4. Delete ONLY profiles (keep event_players & match_players for billing history)
+        const { error: delErr } = await supabase
+            .from('profiles')
+            .delete()
+            .in('id', oldGuestIds);
+
+        if (!delErr) {
+            console.log(`[Cleanup] ลบขาจรจากก๊วนเก่า ${oldGuestIds.length} คน (เก็บบิลไว้)`);
+        }
+    }, []);
+
+    useEffect(() => {
+        params.then((p) => {
+            setEventId(p.eventId);
+            cleanupOldGuests(p.eventId).then(() => loadData(p.eventId));
+        });
+    }, [params]);
 
     const loadData = useCallback(async (id: string) => {
         const supabase = createClient();
@@ -500,6 +542,23 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (error) { toast.error('อัปเดตไม่สำเร็จ'); return; }
         toast.success(newStatus === 'paid' ? 'บันทึกว่าจ่ายแล้ว ✅' : 'เปลี่ยนสถานะเป็นยังไม่จ่าย');
         loadData(eventId);
+    };
+
+    const updateDiscount = async (ep: EventPlayer, discountValue: number) => {
+        // Optimistic update
+        setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, discount: discountValue } : p));
+
+        const supabase = createClient();
+        const { error } = await supabase
+            .from('event_players')
+            .update({ discount: discountValue })
+            .eq('id', ep.id);
+
+        if (error) {
+            toast.error('บันทึกส่วนลดไม่สำเร็จ');
+            // Revert
+            setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, discount: ep.discount } : p));
+        }
     };
 
     const handleAutoMatch = () => {
@@ -1334,6 +1393,16 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 const prof = ep.profiles as unknown as Profile;
                                                 const isPaid = ep.payment_status === 'paid';
                                                 const isUpdating = updatingPayment === ep.user_id;
+                                                const originalBill = (() => {
+                                                    if (!event) return 0;
+                                                    let totalShuttles = 0;
+                                                    matches.filter(m =>
+                                                        (m.status === 'finished' || m.status === 'playing') &&
+                                                        m.match_players?.some(mp => mp.user_id === ep.user_id)
+                                                    ).forEach(m => { if (m.shuttlecock_numbers) totalShuttles += m.shuttlecock_numbers.length; });
+                                                    return (event.entry_fee || 0) + ((event.shuttlecock_price || 0) * totalShuttles);
+                                                })();
+                                                const hasDiscount = (ep.discount || 0) > 0;
                                                 return (
                                                     <div
                                                         key={ep.id}
@@ -1355,9 +1424,35 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </p>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0 ml-2">
-                                                            <span className="text-sm font-bold" style={{ color: 'var(--gray-700)' }}>
-                                                                ฿{(userBills[ep.user_id] || 0).toLocaleString()}
-                                                            </span>
+                                                            {/* Discount Input */}
+                                                            <div className="flex items-center gap-1">
+                                                                <input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    placeholder="0"
+                                                                    defaultValue={ep.discount || ''}
+                                                                    onBlur={(e) => {
+                                                                        const val = parseInt(e.target.value) || 0;
+                                                                        if (val !== (ep.discount || 0)) updateDiscount(ep, val);
+                                                                    }}
+                                                                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                                                    className="w-16 text-right text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 focus:outline-none transition-all"
+                                                                    style={{ background: hasDiscount ? 'rgba(147,51,234,0.04)' : 'white', color: hasDiscount ? '#7c3aed' : 'var(--gray-600)' }}
+                                                                    title="ส่วนลด (บาท)"
+                                                                />
+                                                                <span className="text-[10px] text-gray-400 font-medium">ลด</span>
+                                                            </div>
+
+                                                            {/* Bill Amount */}
+                                                            <div className="text-right min-w-[60px]">
+                                                                {hasDiscount && (
+                                                                    <p className="text-[10px] line-through text-gray-400">฿{originalBill.toLocaleString()}</p>
+                                                                )}
+                                                                <span className="text-sm font-bold" style={{ color: hasDiscount ? '#7c3aed' : 'var(--gray-700)' }}>
+                                                                    ฿{(userBills[ep.user_id] || 0).toLocaleString()}
+                                                                </span>
+                                                            </div>
+
                                                             <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'}`}>
                                                                 {isPaid ? 'จ่ายแล้ว' : 'ยังไม่จ่าย'}
                                                             </span>

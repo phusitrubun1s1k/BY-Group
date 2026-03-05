@@ -17,6 +17,7 @@ const userMenuItems = [
     { href: '/dashboard', label: 'หน้าหลัก', icon: 'solar:home-2-linear' },
     { href: '/dashboard/live', label: 'กระดานคิว', icon: 'solar:monitor-smartphone-linear' },
     { href: '/dashboard/leaderboard', label: 'จัดอันดับ', icon: 'solar:cup-star-linear' },
+    { href: '/dashboard/achievements', label: 'ความสำเร็จ', icon: 'solar:medal-star-linear' },
     { href: '/dashboard/profile', label: 'โปรไฟล์', icon: 'solar:user-circle-linear' },
 ];
 

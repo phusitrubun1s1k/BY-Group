@@ -16,7 +16,7 @@ export default function LiveBoardPage() {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
     const [eventPlayers, setEventPlayers] = useState<EventPlayer[]>([]);
-    const [myBill, setMyBill] = useState<{ amount: number; totalGames: number; totalShuttlecocks: number } | null>(null);
+    const [myBill, setMyBill] = useState<{ amount: number; originalAmount: number; discount: number; totalGames: number; totalShuttlecocks: number } | null>(null);
 
     const fetchMatches = async (eventId: string, userId: string | undefined, currentFee: number, currentShuttlecockPrice: number) => {
         const supabase = createClient();
@@ -46,10 +46,15 @@ export default function LiveBoardPage() {
                         }
                     });
 
-                    const amount = currentFee + (currentShuttlecockPrice * totalShuttles);
+                    const myEp = (playersRes.data as EventPlayer[]).find(ep => ep.user_id === userId);
+                    const myDiscount = myEp?.discount || 0;
+                    const originalAmount = currentFee + (currentShuttlecockPrice * totalShuttles);
+                    const amount = Math.max(0, originalAmount - myDiscount);
 
                     setMyBill({
                         amount,
+                        originalAmount,
+                        discount: myDiscount,
                         totalGames,
                         totalShuttlecocks: totalShuttles
                     });
@@ -336,7 +341,12 @@ export default function LiveBoardPage() {
 
                         <div className="bg-white/60 backdrop-blur-xl border border-white/80 rounded-2xl p-4 shadow-sm mb-4">
                             <div className="flex items-baseline gap-2 mb-3 border-b border-gray-100 pb-3">
-                                <span className="text-3xl font-black text-gray-900 tracking-tighter">
+                                {myBill.discount > 0 && (
+                                    <span className="text-lg font-bold text-gray-300 line-through tracking-tighter">
+                                        ฿{myBill.originalAmount.toLocaleString()}
+                                    </span>
+                                )}
+                                <span className={`text-3xl font-black tracking-tighter ${myBill.discount > 0 ? 'text-purple-600' : 'text-gray-900'}`}>
                                     ฿{myBill.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                                 </span>
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">ยอดรวม</span>
@@ -349,8 +359,17 @@ export default function LiveBoardPage() {
                                 </div>
                                 <div className="flex items-center justify-between text-sm">
                                     <span className="font-bold text-gray-500">ค่าลูกแบด <span className="text-xs font-bold text-gray-400">({myBill.totalShuttlecocks} ลูก)</span></span>
-                                    <span className="font-black text-blue-600">+ ฿{Math.max(0, myBill.amount - event.entry_fee).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</span>
+                                    <span className="font-black text-blue-600">+ ฿{(event.shuttlecock_price * myBill.totalShuttlecocks).toLocaleString()}</span>
                                 </div>
+                                {myBill.discount > 0 && (
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="font-bold text-purple-500 flex items-center gap-1">
+                                            <Icon icon="solar:tag-price-bold" width={14} />
+                                            ส่วนลด
+                                        </span>
+                                        <span className="font-black text-purple-600">- ฿{myBill.discount.toLocaleString()}</span>
+                                    </div>
+                                )}
                                 <div className="flex items-center justify-between text-sm">
                                     <span className="font-bold text-gray-500">จำนวนเกมที่เล่น</span>
                                     <span className="font-black text-gray-900">{myBill.totalGames} เกม</span>

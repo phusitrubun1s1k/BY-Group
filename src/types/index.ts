@@ -33,6 +33,7 @@ export interface EventPlayer {
     is_checked_in: boolean;
     is_substitute: boolean;
     slip_url: string | null;
+    discount: number;
     created_at: string;
     // Joined fields
     profiles?: Profile;
