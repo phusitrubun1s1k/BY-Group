@@ -8,6 +8,8 @@ import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import RankBadge from '@/src/components/RankBadge';
+import { truncateName } from '@/src/lib/string-utils';
+
 
 const SKILL_LEVELS = ['เปาะแปะ', 'BG', 'N', 'S', 'P-', 'P', 'P+', 'C', 'B', 'A'];
 
@@ -302,7 +304,7 @@ export default function UserManagementPage() {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex flex-col gap-0.5 min-w-[120px]">
-                                                <p className="text-sm font-bold text-gray-900">{user.display_name}</p>
+                                                <p className="text-sm font-bold text-gray-900">{truncateName(user.display_name, 16)}</p>
                                                 <p className="text-[10px] font-medium text-gray-400 truncate max-w-[150px]">{user.email}</p>
                                             </div>
                                         </td>
@@ -451,7 +453,7 @@ export default function UserManagementPage() {
                                     )}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <h2 className="text-2xl font-black text-white leading-tight mb-1">{selectedUserDetail.display_name}</h2>
+                                    <h2 className="text-2xl font-black text-white leading-tight mb-1">{truncateName(selectedUserDetail.display_name, 20)}</h2>
                                     <p className="text-gray-400 text-sm font-medium mb-3">{selectedUserDetail.full_name || 'ชื่อ-นามสกุลจริงไม่ระบุ'}</p>
                                     <div className="flex flex-wrap gap-2">
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${selectedUserDetail.role === 'admin' ? 'bg-orange-500/20 text-orange-400 border-orange-500/20' : 'bg-white/10 text-gray-400 border-white/10'}`}>

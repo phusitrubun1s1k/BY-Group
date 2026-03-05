@@ -5,6 +5,8 @@ import { createClient } from '@/src/lib/supabase/client';
 import type { Event, Match, Profile, EventPlayer } from '@/src/types';
 import { Icon } from '@iconify/react';
 import Link from 'next/link';
+import { truncateName } from '@/src/lib/string-utils';
+
 
 export default function LiveBoardPage() {
     const [event, setEvent] = useState<Event | null>(null);
@@ -181,7 +183,7 @@ export default function LiveBoardPage() {
                                     fontWeight: isMe ? '900' : 'bold',
                                     textShadow: isMe ? '0 0 1px rgba(249,115,22,0.3)' : 'none',
                                 }}>
-                                    {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
+                                    {truncateName((mp.profiles as unknown as Profile)?.display_name, 12)} {isMe && '(คุณ)'}
                                 </p>
                             );
                         })}
@@ -210,7 +212,7 @@ export default function LiveBoardPage() {
                                     fontWeight: isMe ? '900' : 'bold',
                                     textShadow: isMe ? '0 0 1px rgba(59,130,246,0.3)' : 'none',
                                 }}>
-                                    {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
+                                    {truncateName((mp.profiles as unknown as Profile)?.display_name, 12)} {isMe && '(คุณ)'}
                                 </p>
                             );
                         })}
@@ -309,8 +311,8 @@ export default function LiveBoardPage() {
                 {/* My Bill Summary */}
                 {myBill && (
                     <div className={`card p-6 border-none shadow-xl transition-all duration-500 animate-in ${eventPlayers.find(ep => ep.user_id === currentUserId)?.payment_status === 'paid'
-                            ? 'bg-gradient-to-br from-green-50 to-white ring-1 ring-green-100'
-                            : 'bg-gradient-to-br from-blue-50 to-white ring-1 ring-blue-100'
+                        ? 'bg-gradient-to-br from-green-50 to-white ring-1 ring-green-100'
+                        : 'bg-gradient-to-br from-blue-50 to-white ring-1 ring-blue-100'
                         }`}>
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
@@ -385,7 +387,7 @@ export default function LiveBoardPage() {
                                             <div className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center text-xs font-bold group-hover:bg-orange-500 transition-colors">
                                                 {(ep.profiles as any)?.display_name?.charAt(0).toUpperCase()}
                                             </div>
-                                            <span className="text-xs font-bold text-gray-700">{(ep.profiles as any)?.display_name}</span>
+                                            <span className="text-xs font-bold text-gray-700">{truncateName((ep.profiles as any)?.display_name, 16)}</span>
                                         </div>
                                     ))}
                                 </div>

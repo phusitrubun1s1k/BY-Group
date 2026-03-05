@@ -11,6 +11,7 @@ import { useConfirm } from '@/src/components/ConfirmProvider';
 import RankBadge from '@/src/components/RankBadge';
 import { getRankFromMMR } from '@/src/lib/rank-utils';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
+import { truncateName } from '@/src/lib/string-utils';
 
 const GUEST_SKILL_OPTIONS: SelectOption[] = [
     { value: '', label: '-- เลือกระดับ --', icon: 'solar:question-circle-linear' },
@@ -33,6 +34,7 @@ const getSkillColor = (level: string | null) => {
     if (['C', 'B', 'A'].includes(level || '')) return '#9333ea';
     return '#6b7280'; // fallback
 };
+
 
 export default function MatchMakerPage({ params }: { params: Promise<{ eventId: string }> }) {
     const [eventId, setEventId] = useState('');
@@ -862,7 +864,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                 {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
                                                                             </div>
                                                                             <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
+                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
+                                                                                    {truncateName(prof?.display_name, 20)}
+                                                                                </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
@@ -944,7 +948,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                 {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
                                                                             </div>
                                                                             <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
+                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
+                                                                                    {truncateName(prof?.display_name, 20)}
+                                                                                </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
                                                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
@@ -1019,7 +1025,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                 {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : <Icon icon="solar:ghost-bold" width={20} />}
                                                                             </div>
                                                                             <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">{prof?.display_name}</p>
+                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
+                                                                                    {truncateName(prof?.display_name, 20)}
+                                                                                </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
@@ -1166,7 +1174,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1205,7 +1213,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? '#2563eb' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {(mp.profiles as unknown as Profile)?.display_name} {isMe && '(คุณ)'}
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1342,7 +1350,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             >
                                                                 {prof?.display_name?.charAt(0)?.toUpperCase()}
                                                             </div>
-                                                            <p className="text-sm font-medium truncate" style={{ color: 'var(--gray-900)' }}>{prof?.display_name}</p>
+                                                            <p className="text-sm font-medium truncate" style={{ color: 'var(--gray-900)' }}>
+                                                                {truncateName(prof?.display_name, 20)}
+                                                            </p>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0 ml-2">
                                                             <span className="text-sm font-bold" style={{ color: 'var(--gray-700)' }}>
@@ -1587,7 +1597,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                 )}
                                                             </div>
                                                             <div className="min-w-0">
-                                                                <p className="text-sm font-medium text-gray-900 truncate">{p.display_name}</p>
+                                                                <p className="text-sm font-medium text-gray-900 truncate">
+                                                                    {truncateName(p.display_name, 20)}
+                                                                </p>
                                                                 {p.skill_level && (
                                                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded text-gray-500 bg-gray-100 border border-gray-200">{p.skill_level}</span>
                                                                 )}

@@ -5,6 +5,8 @@ import { createClient } from '@/src/lib/supabase/client';
 import type { Event, EventPlayer, Match, Profile } from '@/src/types';
 import { Icon } from '@iconify/react';
 import { useParams } from 'next/navigation';
+import { truncateName } from '@/src/lib/string-utils';
+
 
 export default function PublicLiveBoardPage() {
     const params = useParams();
@@ -163,11 +165,11 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                         <span className="text-[10px] font-black p-1 rounded bg-gray-100 text-gray-500">คอร์ท {match.court_number}</span>
                         <div className="flex items-center gap-1 min-w-0 truncate">
                             <span className={`text-[11px] font-bold truncate ${aWon ? 'text-orange-600' : 'text-gray-600'}`}>
-                                {tA.map(mp => (mp.profiles as unknown as Profile).display_name).join(' + ')}
+                                {tA.map(mp => truncateName((mp.profiles as unknown as Profile).display_name, 12)).join(' + ')}
                             </span>
                             <span className="text-[9px] font-bold text-gray-300 italic">vs</span>
                             <span className={`text-[11px] font-bold truncate ${bWon ? 'text-blue-600' : 'text-gray-600'}`}>
-                                {tB.map(mp => (mp.profiles as unknown as Profile).display_name).join(' + ')}
+                                {tB.map(mp => truncateName((mp.profiles as unknown as Profile).display_name, 12)).join(' + ')}
                             </span>
                         </div>
                     </div>
@@ -216,7 +218,7 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                             const prof = mp.profiles as unknown as Profile;
                             return (
                                 <div key={idx} className="flex flex-col">
-                                    <span className={`text-xs font-black truncate ${aWon ? 'text-orange-900' : 'text-gray-900'}`}>{prof.display_name}</span>
+                                    <span className={`text-xs font-black truncate ${aWon ? 'text-orange-900' : 'text-gray-900'}`}>{truncateName(prof.display_name, 14)}</span>
                                     {prof.skill_level && (
                                         <span className={`text-[9px] font-bold ${aWon ? 'text-orange-500' : 'text-gray-400'}`}>{prof.skill_level}</span>
                                     )}
@@ -240,7 +242,7 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                             const prof = mp.profiles as unknown as Profile;
                             return (
                                 <div key={idx} className="flex flex-col items-end">
-                                    <span className={`text-xs font-black truncate ${bWon ? 'text-blue-900' : 'text-gray-900'}`}>{prof.display_name}</span>
+                                    <span className={`text-xs font-black truncate ${bWon ? 'text-blue-900' : 'text-gray-900'}`}>{truncateName(prof.display_name, 14)}</span>
                                     {prof.skill_level && (
                                         <span className={`text-[10px] font-bold ${bWon ? 'text-blue-500' : 'text-gray-400'}`}>{prof.skill_level}</span>
                                     )}

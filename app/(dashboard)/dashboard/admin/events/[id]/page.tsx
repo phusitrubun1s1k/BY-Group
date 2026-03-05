@@ -8,6 +8,8 @@ import Link from 'next/link';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
 import QRCode from 'react-qr-code';
+import { truncateName } from '@/src/lib/string-utils';
+
 
 export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const [event, setEvent] = useState<Event | null>(null);
@@ -259,7 +261,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium truncate" style={{ color: isChecked ? 'var(--orange-600)' : 'var(--gray-900)' }}>
-                                        {user.display_name}
+                                        {truncateName(user.display_name, 16)}
                                     </p>
                                     <div className="flex items-center gap-1">
                                         <Icon icon={skill.icon} width={12} style={{ color: skill.color }} />

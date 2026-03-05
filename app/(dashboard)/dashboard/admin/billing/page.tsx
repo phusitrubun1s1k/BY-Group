@@ -6,6 +6,8 @@ import type { Event, EventPlayer, Profile } from '@/src/types';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
+import { truncateName } from '@/src/lib/string-utils';
+
 
 interface PlayerBill {
     eventPlayerId: string;
@@ -612,7 +614,7 @@ export default function AdminBillingPage() {
                                                 </div>
                                                 <div className="min-w-0 text-left">
                                                     <p className="text-sm font-bold truncate" style={{ color: 'var(--gray-900)' }}>
-                                                        {bill.displayName}
+                                                        {truncateName(bill.displayName, 16)}
                                                     </p>
                                                     <p className="text-[11px] sm:hidden" style={{ color: 'var(--gray-500)' }}>
                                                         {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''} · ค้าง ฿{bill.amount.toFixed(0)}
@@ -739,7 +741,7 @@ export default function AdminBillingPage() {
                                 <Icon icon="solar:history-bold-duotone" width={24} style={{ color: 'var(--orange-500)' }} />
                                 <div>
                                     <h3 className="text-lg font-bold" style={{ color: 'var(--gray-900)' }}>ประวัติการชำระเงิน</h3>
-                                    <p className="text-sm font-medium" style={{ color: 'var(--gray-500)' }}>{historyUser.name}</p>
+                                    <p className="text-sm font-medium" style={{ color: 'var(--gray-500)' }}>{truncateName(historyUser.name, 20)}</p>
                                 </div>
                             </div>
                             <button onClick={() => setHistoryUser(null)} className="w-8 h-8 rounded-full flex items-center justify-center bg-white border hover:bg-gray-100 transition-colors">
