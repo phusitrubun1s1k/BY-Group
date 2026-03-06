@@ -94,7 +94,8 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
         display_name: string;
         full_name: string;
         skill_level: Profile['skill_level'];
-    }>({ display_name: '', full_name: '', skill_level: null });
+        birth_date: string;
+    }>({ display_name: '', full_name: '', skill_level: null, birth_date: '' });
     const [saving, setSaving] = useState(false);
     const [stats, setStats] = useState({ totalGames: 0, wins: 0, losses: 0, totalPoints: 0 });
     const [todayBill, setTodayBill] = useState<{
@@ -130,7 +131,8 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             setEditForm({
                 display_name: profileData.display_name || '',
                 full_name: profileData.full_name || '',
-                skill_level: profileData.skill_level
+                skill_level: profileData.skill_level,
+                birth_date: profileData.birth_date || ''
             });
         }
 
@@ -270,6 +272,10 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ชื่อ-นามสกุลจริง (สำหรับใบเสร็จ)</label>
                                         <input value={editForm.full_name} onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none placeholder:text-gray-500" />
                                     </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">วันเกิด (Birthday)</label>
+                                        <input type="date" value={editForm.birth_date} onChange={e => setEditForm(f => ({ ...f, birth_date: e.target.value }))} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none [color-scheme:dark]" />
+                                    </div>
                                     <CustomSelect label="ระดับมือ" value={editForm.skill_level || ''} onChangeAction={(val) => setEditForm(f => ({ ...f, skill_level: (val || null) as Profile['skill_level'] }))} options={SKILL_OPTIONS} icon="solar:medal-star-bold" />
                                     <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/10">
                                         <button onClick={() => setIsEditing(false)} className="btn btn-sm bg-white/10 text-white border-white/20 flex-1">ยกเลิก</button>
@@ -279,7 +285,17 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                             ) : (
                                 <>
                                     <h2 className="text-xl font-black text-white">{profile.display_name}</h2>
-                                    {isOwnProfile && <p className="text-sm font-medium text-gray-400">{profile.full_name}</p>}
+                                    {isOwnProfile && (
+                                        <div className="flex flex-col gap-0.5">
+                                            <p className="text-sm font-medium text-gray-400">{profile.full_name}</p>
+                                            {profile.birth_date && (
+                                                <div className="flex items-center gap-1.5 text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+                                                    <Icon icon="lucide:cake" width={12} className="text-pink-400" />
+                                                    {new Date(profile.birth_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                     <div className="flex items-center gap-2 mt-3">
                                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-white/10 text-white border border-white/10">
                                             {profile.role === 'admin' ? 'ผู้จัดก๊วน' : 'ผู้เล่น'}

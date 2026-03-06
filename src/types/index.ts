@@ -9,6 +9,7 @@ export interface Profile {
     is_guest: boolean;
     mmr?: number;
     avatar_url: string | null;
+    birth_date: string | null;
     created_at: string;
 }
 

@@ -127,10 +127,10 @@ export const ACHIEVEMENTS: AchievementMetadata[] = [
         id: 'birthday_play',
         name: 'วันเกิด',
         description: 'เล่นในวันเกิดตัวเอง',
-        icon: 'solar:cake-bold',
+        icon: 'lucide:cake',
         category: 'special',
         tiers: [
-            { level: 1, target: 1, label: 'แฮปปี้เบิร์ดเดย์', color: '#f472b6', badge: '🎂', icon: 'solar:cake-bold' },
+            { level: 1, target: 1, label: 'แฮปปี้เบิร์ดเดย์', color: '#f472b6', badge: '🎂', icon: 'lucide:cake' },
         ]
     },
     {

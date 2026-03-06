@@ -139,6 +139,22 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
         }
     });
 
+    // 5. Birthday check
+    let birthday_play = 0;
+    if (profile?.birth_date && matchPlayers) {
+        const bd = new Date(profile.birth_date);
+        const birthDay = bd.getDate();
+        const birthMonth = bd.getMonth();
+
+        const playedOnBirthday = matchPlayers.some(mp => {
+            if (!mp.matches?.event_date) return false;
+            const ed = new Date(mp.matches.event_date);
+            return ed.getDate() === birthDay && ed.getMonth() === birthMonth;
+        });
+
+        if (playedOnBirthday) birthday_play = 1;
+    }
+
     return {
         games_count,
         win_count,
@@ -149,7 +165,7 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
         paid_on_time,
         total_spent: Math.max(0, total_spent),
         unique_partners: partners.size,
-        birthday_play: 0,
+        birthday_play,
         member_status: profile?.is_guest ? 0 : 1,
         og_member: isOG,
         mvp_votes: 0,
