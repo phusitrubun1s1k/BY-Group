@@ -155,6 +155,21 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         });
         return used;
     }, [matches, editingMatchId]);
+
+    // Active courts list for summary (from event.courts)
+    const eventCourts = useMemo(() => {
+        return event?.courts || [];
+    }, [event]);
+
+    const activeCourtsSet = useMemo(() => {
+        const active = new Set<string>();
+        matches.forEach(m => {
+            if (m.status === 'playing' || m.status === 'waiting') {
+                if (m.court_number) active.add(m.court_number);
+            }
+        });
+        return active;
+    }, [matches]);
     // Cleanup guest profiles from PREVIOUS events (preserve billing data)
     const cleanupOldGuests = useCallback(async (currentEventId: string) => {
         const supabase = createClient();
@@ -488,7 +503,31 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         const supabase = createClient();
         await supabase.from('matches').update({ status }).eq('id', matchId);
-        toast.success('เริ่มเกม!');
+        toast.success(status === 'playing' ? 'เริ่มเกม!' : 'บันทึกสำเร็จ');
+        loadData(eventId);
+    };
+
+    const handleCancelMatch = async (matchId: string) => {
+        const ok = await confirm({
+            title: 'ยกเลิกแมตช์?',
+            message: 'ยืนยันการยกเลิกแมตช์นี้? ระบบจะย้ายกลับไป "รอคิว" และยกเลิกการคิดเงินสำหรับแมตช์นี้',
+            type: 'warning',
+            confirmText: 'ยืนยันยกเลิก'
+        });
+        if (!ok) return;
+
+        const supabase = createClient();
+        const { error } = await supabase.from('matches').update({
+            status: 'waiting',
+            shuttlecock_numbers: [] // Clear shuttlecocks to reverse billing
+        }).eq('id', matchId);
+
+        if (error) {
+            toast.error('ไม่สามารถยกเลิกแมตช์ได้: ' + error.message);
+            return;
+        }
+
+        toast.success('ยกเลิกแมตช์แล้ว');
         loadData(eventId);
     };
 
@@ -681,6 +720,20 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     ยอดทั้งหมด ฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}
                                 </span>
                             </div>
+
+                            {eventCourts.length > 0 && (
+                                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100">
+                                    <Icon icon="solar:clapperboard-edit-linear" width={16} className="text-indigo-500" />
+                                    <span className="text-xs font-semibold text-indigo-700">คอร์ท:</span>
+                                    <div className="flex items-center gap-1 ml-0.5">
+                                        {eventCourts.map(num => (
+                                            <span key={num} className={`text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm transition-colors ${activeCourtsSet.has(num) ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                                                {num}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -776,8 +829,17 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 </div>
                                 <div className="grid grid-cols-2 gap-4 mb-4">
                                     <div className="form-group" style={{ marginBottom: 0 }}>
-                                        <label className="form-label">คอร์ท *</label>
-                                        <input className="form-input form-input-plain" placeholder="1, 2, 3..." value={courtNumber} onChange={(e) => setCourtNumber(e.target.value)} />
+                                        <CustomSelect
+                                            label="คอร์ท *"
+                                            value={courtNumber}
+                                            onChangeAction={(val) => setCourtNumber(val || '')}
+                                            options={(event?.courts || []).map(c => ({
+                                                value: c,
+                                                label: `คอร์ท ${c}`,
+                                                icon: 'solar:clapperboard-edit-linear'
+                                            }))}
+                                            icon="solar:clapperboard-edit-bold"
+                                        />
                                     </div>
                                     <div className="form-group" style={{ marginBottom: 0 }}>
                                         <label className="form-label">หมายเลขลูก</label>
@@ -1174,7 +1236,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <span className="badge badge-muted shrink-0">#{i + 1}</span>
                                                     <span className={`badge shrink-0 ${cfg.badge}`}>{cfg.label}</span>
-                                                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                                                    <span className="text-[10px] font-black px-2 py-0.5 rounded shadow-sm bg-gray-900 text-white shrink-0">
                                                         คอร์ท {match.court_number}
                                                     </span>
                                                     {match.shuttlecock_numbers && match.shuttlecock_numbers.length > 0 && (
@@ -1206,9 +1268,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </>
                                                         )}
                                                         {match.status === 'playing' && (
-                                                            <button onClick={() => updateMatchStatus(match.id, 'finished')} className="btn btn-sm" style={{ background: 'rgba(249,115,22,0.06)', color: 'var(--orange-500)' }}>
-                                                                <Icon icon="solar:check-circle-linear" width={14} /> จบ
-                                                            </button>
+                                                            <div className="flex gap-1.5">
+                                                                <button onClick={() => handleCancelMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }}>
+                                                                    <Icon icon="solar:trash-bin-trash-bold" width={14} /> ยกเลิก
+                                                                </button>
+                                                                <button onClick={() => updateMatchStatus(match.id, 'finished')} className="btn btn-sm" style={{ background: 'rgba(249,115,22,0.06)', color: 'var(--orange-500)' }}>
+                                                                    <Icon icon="solar:check-circle-linear" width={14} /> จบ
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 )}
@@ -1250,7 +1317,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     {match.status === 'finished' ? (
                                                         <p className="text-lg font-bold" style={{ color: 'var(--gray-900)' }}>{match.team_a_score} - {match.team_b_score}</p>
                                                     ) : (
-                                                        <span className="text-[10px] font-black tracking-tighter text-indigo-400">VS</span>
+                                                        <div className="flex flex-col items-center">
+                                                            <span className="text-[9px] font-black tracking-tighter text-indigo-300 uppercase leading-none mb-0.5 italic">VS</span>
+                                                            <div className="text-[14px] font-black text-indigo-600 leading-none">
+                                                                {match.court_number}
+                                                            </div>
+                                                        </div>
                                                     )}
                                                 </div>
                                                 <div className="flex-1 p-3 rounded-xl min-w-0" style={{
