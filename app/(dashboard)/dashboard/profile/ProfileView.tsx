@@ -14,7 +14,7 @@ import { getNextRank } from '@/src/lib/rank-utils';
 import { fetchPlayerStats, calculateAchievementProgress, AchievementProgress } from '@/src/lib/utils/achievement-utils';
 
 const SKILL_OPTIONS: SelectOption[] = [
-    { value: '', label: 'ไม่ระบุ', icon: 'solar:question-circle-linear' },
+    { value: null as any, label: 'ไม่ระบุ', icon: 'solar:question-circle-linear' },
     { value: 'เปาะแปะ', label: 'เปาะแปะ (ผู้เริ่มต้น)', icon: 'solar:user-linear', description: 'เพิ่งเริ่มหัดเล่น ยังไม่คุ้นชินกติกา' },
     { value: 'BG', label: 'BG (ตีพอได้)', icon: 'solar:user-bold', description: 'ตีโต้ได้บ้าง เริ่มเข้าใจพื้นฐาน' },
     { value: 'N', label: 'N (ตีได้/รับลูกกระเจิง)', icon: 'solar:user-bold-duotone', description: 'เริ่มตีได้แรงขึ้น วิ่งรับลูกได้' },
@@ -90,7 +90,11 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
     const [profile, setProfile] = useState<Profile | null>(null);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
-    const [editForm, setEditForm] = useState({ display_name: '', full_name: '', skill_level: '' });
+    const [editForm, setEditForm] = useState<{
+        display_name: string;
+        full_name: string;
+        skill_level: Profile['skill_level'];
+    }>({ display_name: '', full_name: '', skill_level: null });
     const [saving, setSaving] = useState(false);
     const [stats, setStats] = useState({ totalGames: 0, wins: 0, losses: 0, totalPoints: 0 });
     const [todayBill, setTodayBill] = useState<{
@@ -126,7 +130,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             setEditForm({
                 display_name: profileData.display_name || '',
                 full_name: profileData.full_name || '',
-                skill_level: profileData.skill_level || ''
+                skill_level: profileData.skill_level
             });
         }
 
@@ -266,7 +270,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ชื่อ-นามสกุลจริง (สำหรับใบเสร็จ)</label>
                                         <input value={editForm.full_name} onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))} className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none placeholder:text-gray-500" />
                                     </div>
-                                    <CustomSelect label="ระดับมือ" value={editForm.skill_level} onChangeAction={(val) => setEditForm(f => ({ ...f, skill_level: val }))} options={SKILL_OPTIONS} icon="solar:medal-star-bold" />
+                                    <CustomSelect label="ระดับมือ" value={editForm.skill_level || ''} onChangeAction={(val) => setEditForm(f => ({ ...f, skill_level: (val || null) as Profile['skill_level'] }))} options={SKILL_OPTIONS} icon="solar:medal-star-bold" />
                                     <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/10">
                                         <button onClick={() => setIsEditing(false)} className="btn btn-sm bg-white/10 text-white border-white/20 flex-1">ยกเลิก</button>
                                         <button onClick={saveProfile} disabled={saving} className="btn btn-sm bg-orange-500 text-white flex-1">{saving ? <div className="spinner spinner-sm" /> : 'บันทึก'}</button>
