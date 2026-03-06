@@ -90,7 +90,7 @@ export const ACHIEVEMENTS: AchievementMetadata[] = [
             { level: 1, target: 5, label: 'คนแรกของสนาม', color: '#f59e0b', badge: '🌅', icon: 'solar:sunrise-bold' },
         ]
     },
-    // 💰 หมวด: การเงิน (Payment)
+    // 💰 หมวด: การเงิน (Payment.)
     {
         id: 'paid_on_time',
         name: 'การจ่ายตรงเวลา',
