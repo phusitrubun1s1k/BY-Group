@@ -95,7 +95,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
         full_name: string;
         skill_level: Profile['skill_level'];
         birth_date: string;
-    }>({ display_name: '', full_name: '', skill_level: null, birth_date: '' });
+    }>({ display_name: '', full_name: '', skill_level: undefined, birth_date: '' });
     const [saving, setSaving] = useState(false);
     const [stats, setStats] = useState({ totalGames: 0, wins: 0, losses: 0, totalPoints: 0 });
     const [todayBill, setTodayBill] = useState<{
