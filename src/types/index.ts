@@ -20,6 +20,8 @@ export interface Event {
     entry_fee: number;
     status: 'open' | 'closed';
     courts?: string[];
+    start_time?: string;
+    end_time?: string;
     created_at?: string;
 }
 
