@@ -108,19 +108,21 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         const bills: Record<string, number> = {};
 
         players.forEach(p => {
-            let totalShuttles = 0;
+            let totalShuttleCost = 0;
             const myMatches = matches.filter(m =>
                 (m.status === 'finished' || m.status === 'playing') &&
                 m.match_players?.some(mp => mp.user_id === p.user_id)
             );
 
             myMatches.forEach(m => {
-                if (m.shuttlecock_numbers) {
-                    totalShuttles += m.shuttlecock_numbers.length;
+                if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
+                    const matchCost = m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
+                    const matchPlayerCount = m.match_players?.length || 4;
+                    totalShuttleCost += matchCost / matchPlayerCount;
                 }
             });
 
-            const amount = (event.entry_fee || 0) + ((event.shuttlecock_price || 0) * totalShuttles) - (p.discount || 0);
+            const amount = Math.ceil((event.entry_fee || 0) + totalShuttleCost) - (p.discount || 0);
             bills[p.user_id] = Math.max(0, amount);
         });
         return bills;
@@ -1339,7 +1341,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} {playerStats[mp.user_id]?.matchNums.length > 0 ? `(#${playerStats[mp.user_id].matchNums.join(', #')})` : ''}
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} (#{match.match_number || i + 1})
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1383,7 +1385,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? '#2563eb' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} {playerStats[mp.user_id]?.matchNums.length > 0 ? `(#${playerStats[mp.user_id].matchNums.join(', #')})` : ''}
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} (#{match.match_number || i + 1})
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1481,12 +1483,18 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 const isUpdating = updatingPayment === ep.user_id;
                                                 const originalBill = (() => {
                                                     if (!event) return 0;
-                                                    let totalShuttles = 0;
+                                                    let totalShuttleCost = 0;
                                                     matches.filter(m =>
                                                         (m.status === 'finished' || m.status === 'playing') &&
                                                         m.match_players?.some(mp => mp.user_id === ep.user_id)
-                                                    ).forEach(m => { if (m.shuttlecock_numbers) totalShuttles += m.shuttlecock_numbers.length; });
-                                                    return (event.entry_fee || 0) + ((event.shuttlecock_price || 0) * totalShuttles);
+                                                    ).forEach(m => {
+                                                        if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
+                                                            const matchCost = m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
+                                                            const matchPlayerCount = m.match_players?.length || 4;
+                                                            totalShuttleCost += matchCost / matchPlayerCount;
+                                                        }
+                                                    });
+                                                    return Math.ceil((event.entry_fee || 0) + totalShuttleCost);
                                                 })();
                                                 const hasDiscount = (ep.discount || 0) > 0;
                                                 return (
