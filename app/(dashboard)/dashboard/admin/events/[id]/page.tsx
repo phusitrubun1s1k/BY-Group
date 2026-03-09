@@ -89,7 +89,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     if (!event) return <div className="text-center py-20"><p style={{ color: 'var(--gray-500)' }}>ไม่พบข้อมูลก๊วน</p></div>;
 
     const checkedInIds = new Set(eventPlayers.map((ep) => ep.user_id));
-    const skillIcon = (level: string | null) => {
+    const skillIcon = (level: string | null | undefined) => {
         if (['เปาะแปะ', 'BG', 'N', 'S'].includes(level || '')) return { icon: 'solar:star-linear', color: '#16a34a' };
         if (['P-', 'P', 'P+'].includes(level || '')) return { icon: 'solar:star-bold', color: '#2563eb' };
         return { icon: 'solar:star-shine-bold', color: '#9333ea' };
@@ -238,7 +238,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {allUsers.filter(u =>
                         u.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        u.full_name.toLowerCase().includes(searchQuery.toLowerCase())
+                        (u.full_name || '').toLowerCase().includes(searchQuery.toLowerCase())
                     ).map((user) => {
                         const isChecked = checkedInIds.has(user.id);
                         const skill = skillIcon(user.skill_level);
