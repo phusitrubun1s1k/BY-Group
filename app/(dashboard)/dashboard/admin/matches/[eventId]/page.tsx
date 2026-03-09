@@ -50,7 +50,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [shuttlecockNumber, setShuttlecockNumber] = useState('');
     const [creating, setCreating] = useState(false);
     const [scoreMatch, setScoreMatch] = useState<Match | null>(null);
-    const [winner, setWinner] = useState<'A' | 'B' | 'Draw' | null>(null);
+    const [winner, setWinner] = useState<'A' | 'B' | 'Draw' | 'None' | null>(null);
+    const [matchSeq, setMatchSeq] = useState<string>('');
 
     // Reset winner when score modal opens/closes
     useEffect(() => {
@@ -63,6 +64,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [sidebarTeam, setSidebarTeam] = useState<'A' | 'B' | null>(null);
     const [showPlayersSidebar, setShowPlayersSidebar] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [paymentSearchQuery, setPaymentSearchQuery] = useState('');
     // Add shuttlecock modal state
     const [addingShuttlecockMatch, setAddingShuttlecockMatch] = useState<{ id: string, currentNumbers: string[] } | null>(null);
     const [newShuttlecockNumber, setNewShuttlecockNumber] = useState('');
@@ -81,13 +83,15 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
     // Player stats for match making
     const playerStats = useMemo(() => {
-        const stats: Record<string, { total: number, playing: boolean }> = {};
-        players.forEach(p => { stats[p.user_id] = { total: 0, playing: false }; });
-        matches.forEach(m => {
+        const stats: Record<string, { total: number, playing: boolean, matchNums: number[] }> = {};
+        players.forEach(p => { stats[p.user_id] = { total: 0, playing: false, matchNums: [] }; });
+        matches.forEach((m, idx) => {
+            const mNum = m.match_number || (idx + 1);
             m.match_players?.forEach(mp => {
                 if (stats[mp.user_id]) {
                     if (m.status === 'playing' || m.status === 'finished') {
                         stats[mp.user_id].total++;
+                        stats[mp.user_id].matchNums.push(mNum);
                     }
                     if (m.status === 'playing' || m.status === 'waiting') {
                         stats[mp.user_id].playing = true;
@@ -122,28 +126,6 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         return bills;
     }, [players, matches, event]);
 
-    // personal bill for the logged in user
-    const myBill = useMemo(() => {
-        if (!event || !currentUserId || !userBills[currentUserId]) return null;
-
-        const myMatches = matches.filter(m =>
-            (m.status === 'finished' || m.status === 'playing') &&
-            m.match_players?.some(mp => mp.user_id === currentUserId)
-        );
-
-        let totalShuttles = 0;
-        myMatches.forEach(m => {
-            if (m.shuttlecock_numbers) {
-                totalShuttles += m.shuttlecock_numbers.length;
-            }
-        });
-
-        return {
-            amount: userBills[currentUserId],
-            totalGames: myMatches.length,
-            totalShuttlecocks: totalShuttles
-        };
-    }, [userBills, currentUserId, matches, event]);
 
     // Gather all used shuttlecocks in the current event to prevent duplicates
     const allUsedShuttlecocks = useMemo(() => {
@@ -424,6 +406,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         setTeamB(tB);
         setCourtNumber(match.court_number || '');
         setShuttlecockNumber(match.shuttlecock_numbers?.[0] || '');
+        setMatchSeq(match.match_number ? String(match.match_number) : '');
         setEditingMatchId(match.id);
         setShowForm(true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -458,7 +441,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             if (editingMatchId) {
                 const { error: matchErr } = await supabase.from('matches').update({
                     court_number: courtNumber,
-                    shuttlecock_numbers: shuttles
+                    shuttlecock_numbers: shuttles,
+                    match_number: matchSeq ? parseInt(matchSeq) : null
                 }).eq('id', editingMatchId);
                 if (matchErr) throw matchErr;
 
@@ -470,7 +454,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                 toast.success('แก้ไขข้อมูลแมตช์สำเร็จ');
             } else {
                 const { data: match, error } = await supabase.from('matches').insert({
-                    event_id: eventId, court_number: courtNumber, shuttlecock_numbers: shuttles, status: 'waiting',
+                    event_id: eventId,
+                    court_number: courtNumber,
+                    shuttlecock_numbers: shuttles,
+                    status: 'waiting',
+                    match_number: matchSeq ? parseInt(matchSeq) : null
                 }).select().single();
                 if (error) { toast.error(error.message); return; }
                 await supabase.from('match_players').insert([
@@ -479,31 +467,64 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                 ]);
                 toast.success('สร้างแมตช์สำเร็จ');
             }
-            setShowForm(false); setTeamA([]); setTeamB([]); setCourtNumber(''); setShuttlecockNumber(''); setEditingMatchId(null);
+            setShowForm(false); setTeamA([]); setTeamB([]); setCourtNumber(''); setShuttlecockNumber(''); setMatchSeq(''); setEditingMatchId(null);
             loadData(eventId);
         } catch { toast.error('เกิดข้อผิดพลาดในการบันทึกข้อมูล'); }
         finally { setCreating(false); }
     };
 
     const updateMatchStatus = async (matchId: string, status: 'playing' | 'finished') => {
+        const m = matches.find((x) => x.id === matchId);
         if (status === 'finished') {
-            const m = matches.find((x) => x.id === matchId);
             if (m) { setScoreMatch(m); setWinner(null); }
             return;
         }
         if (status === 'playing') {
+            const isReverting = m?.status === 'finished';
             const ok = await confirm({
-                title: 'เริ่มเกม?',
-                message: 'ยืนยันการเริ่มแมตช์นี้?',
+                title: isReverting ? 'แก้ไขผลแข่ง?' : 'เริ่มเกม?',
+                message: isReverting ? 'ย้ายแมตช์ที่จบแล้วกลับมา "กำลังตี" เพื่อบันทึกผลใหม่?' : 'ยืนยันการเริ่มแมตช์นี้?',
                 type: 'info',
-                confirmText: 'เริ่มเกม'
+                confirmText: isReverting ? 'ยืนยัน' : 'เริ่มเกม'
             });
             if (!ok) return;
         }
 
         const supabase = createClient();
-        await supabase.from('matches').update({ status }).eq('id', matchId);
-        toast.success(status === 'playing' ? 'เริ่มเกม!' : 'บันทึกสำเร็จ');
+        const updateData: any = { status };
+        if (status === 'playing' && m?.status === 'finished') {
+            updateData.team_a_score = 0;
+            updateData.team_b_score = 0;
+        }
+
+        const { error } = await supabase.from('matches').update(updateData).eq('id', matchId);
+        if (error) {
+            toast.error('เกิดข้อผิดพลาด: ' + error.message);
+            return;
+        }
+
+        toast.success(status === 'playing' ? (m?.status === 'finished' ? 'ย้ายกลับมาแก้ไขแล้ว' : 'เริ่มเกม!') : 'บันทึกสำเร็จ');
+        loadData(eventId);
+    };
+
+    const handleDeleteMatch = async (matchId: string) => {
+        const ok = await confirm({
+            title: 'ลบแมตช์?',
+            message: 'ยืนยันการลบแมตช์ที่จบแล้วนี้อย่างถาวร? ข้อมูลคะแนนและการใช้ลูกแบดในแมตช์นี้จะหายไป',
+            type: 'danger',
+            confirmText: 'ลบแมตช์นี้'
+        });
+        if (!ok) return;
+
+        const supabase = createClient();
+        const { error } = await supabase.from('matches').delete().eq('id', matchId);
+
+        if (error) {
+            toast.error('ไม่สามารถลบแมตช์ได้: ' + error.message);
+            return;
+        }
+
+        toast.success('ลบแมตช์เรียบร้อยแล้ว');
         loadData(eventId);
     };
 
@@ -537,13 +558,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (!winner) { toast.error('กรุณาเลือกผลการแข่งขัน'); return; }
 
         const isDraw = winner === 'Draw';
-        const totalA = isDraw ? 1 : (winner === 'A' ? 1 : 0);
-        const totalB = isDraw ? 1 : (winner === 'B' ? 1 : 0);
+        const isNone = winner === 'None';
+        const totalA = isNone ? 0 : (isDraw ? 1 : (winner === 'A' ? 1 : 0));
+        const totalB = isNone ? 0 : (isDraw ? 1 : (winner === 'B' ? 1 : 0));
 
         const ok = await confirm({
             title: 'บันทึกคะแนน?',
-            message: isDraw ? 'ยืนยันผลการแข่งขัน เสมอ?' : `ยืนยันผลการแข่งขัน ทีม ${winner} ชนะ?`,
-            type: 'info',
+            message: isNone ? 'ยืนยันการจบแมตช์โดยไม่แจ้งผลการแข่งขัน?' : (isDraw ? 'ยืนยันผลการแข่งขัน เสมอ?' : `ยืนยันผลการแข่งขัน ทีม ${winner} ชนะ?`),
+            type: isNone ? 'warning' : 'info',
             confirmText: 'บันทึกคะแนน'
         });
         if (!ok) return;
@@ -555,7 +577,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             team_b_score: totalB,
         }).eq('id', scoreMatch.id);
 
-        toast.success(isDraw ? 'บันทึกสำเร็จ! เสมอ 🤝' : `บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`);
+        toast.success(isNone ? 'บันทึกสำเร็จ! (ไม่แจ้งผลแข่ง)' : (isDraw ? 'บันทึกสำเร็จ! เสมอ 🤝' : `บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`));
         setScoreMatch(null);
         loadData(eventId);
     };
@@ -651,6 +673,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         setTeamA(bestCombo.tA.map(p => p.user_id));
         setTeamB(bestCombo.tB.map(p => p.user_id));
         setEditingMatchId(null);
+        setMatchSeq('');
         setShowForm(true);
         toast.success('สุ่มจับคู่ให้แล้ว! กรุณาระบุคอร์ทและกดสร้าง');
     };
@@ -747,7 +770,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 <button onClick={handleAutoMatch} className="btn btn-secondary" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6', border: '1.5px solid rgba(59,130,246,0.3)' }}>
                                     <Icon icon="solar:magic-stick-3-linear" width={18} /> สุ่มแมตช์
                                 </button>
-                                <button onClick={() => { setShowForm(!showForm); setEditingMatchId(null); setTeamA([]); setTeamB([]); setCourtNumber(''); setShuttlecockNumber(''); }} className="btn btn-primary">
+                                <button onClick={() => { setShowForm(!showForm); setEditingMatchId(null); setTeamA([]); setTeamB([]); setCourtNumber(''); setShuttlecockNumber(''); setMatchSeq(''); }} className="btn btn-primary">
                                     <Icon icon="solar:add-circle-linear" width={18} /> สร้างแมตช์ใหม่
                                 </button>
                             </>
@@ -827,7 +850,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         );
                                     })}
                                 </div>
-                                <div className="grid grid-cols-2 gap-4 mb-4">
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
                                     <div className="form-group" style={{ marginBottom: 0 }}>
                                         <CustomSelect
                                             label="คอร์ท *"
@@ -842,15 +865,19 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         />
                                     </div>
                                     <div className="form-group" style={{ marginBottom: 0 }}>
-                                        <label className="form-label">หมายเลขลูก</label>
-                                        <input className="form-input form-input-plain" placeholder="1, 2..." value={shuttlecockNumber} onChange={(e) => setShuttlecockNumber(e.target.value)} />
+                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">ลำดับแมตช์</label>
+                                        <input type="number" className="form-input form-input-plain h-[42px]" placeholder="เช่น 1, 2..." value={matchSeq} onChange={(e) => setMatchSeq(e.target.value)} />
+                                    </div>
+                                    <div className="form-group md:col-span-1 col-span-2" style={{ marginBottom: 0 }}>
+                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">หมายเลขลูก</label>
+                                        <input className="form-input form-input-plain h-[42px]" placeholder="ระบุเบอร์ลูก..." value={shuttlecockNumber} onChange={(e) => setShuttlecockNumber(e.target.value)} />
                                     </div>
                                 </div>
                                 <div className="flex gap-2">
                                     <button onClick={saveMatch} disabled={creating} className="btn btn-primary btn-sm">
                                         {creating ? <><div className="spinner" /> {editingMatchId ? 'กำลังบันทึก...' : 'สร้าง...'}</> : (editingMatchId ? 'บันทึกการแก้ไข' : 'สร้างแมตช์')}
                                     </button>
-                                    <button onClick={() => { setShowForm(false); setTeamA([]); setTeamB([]); setEditingMatchId(null); setCourtNumber(''); setShuttlecockNumber(''); }} className="btn btn-secondary btn-sm">ยกเลิก</button>
+                                    <button onClick={() => { setShowForm(false); setTeamA([]); setTeamB([]); setEditingMatchId(null); setCourtNumber(''); setShuttlecockNumber(''); setMatchSeq(''); }} className="btn btn-secondary btn-sm">ยกเลิก</button>
                                 </div>
                             </div>
                         )}
@@ -1234,7 +1261,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         <div key={match.id} className="card shadow-sm" style={{ padding: '20px 24px' }}>
                                             <div className="flex items-center justify-between mb-4">
                                                 <div className="flex flex-wrap items-center gap-2">
-                                                    <span className="badge badge-muted shrink-0">#{i + 1}</span>
+                                                    <span className="badge badge-muted shrink-0">#{match.match_number || i + 1}</span>
                                                     <span className={`badge shrink-0 ${cfg.badge}`}>{cfg.label}</span>
                                                     <span className="text-[10px] font-black px-2 py-0.5 rounded shadow-sm bg-gray-900 text-white shrink-0">
                                                         คอร์ท {match.court_number}
@@ -1255,27 +1282,39 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         </button>
                                                     )}
                                                 </div>
-                                                {event?.status === 'open' && match.status !== 'finished' && (
+                                                {event?.status === 'open' && (
                                                     <div className="flex gap-1.5">
-                                                        {match.status === 'waiting' && (
+                                                        {match.status === 'finished' && (
+                                                            <>
+                                                                <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6' }} title="ย้ายกลับไปแก้ไขผลแข่ง">
+                                                                    <Icon icon="solar:refresh-linear" width={14} /> เล่นต่อ/แก้ไข
+                                                                </button>
+                                                                <button onClick={() => handleDeleteMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }} title="ลบแมตช์ที่จบแล้วนี้">
+                                                                    <Icon icon="solar:trash-bin-trash-bold" width={14} /> ลบ
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                        {match.status !== 'finished' && (
                                                             <>
                                                                 <button onClick={() => editMatch(match)} className="btn btn-sm" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6' }}>
                                                                     <Icon icon="solar:pen-linear" width={14} /> แก้ไข
                                                                 </button>
-                                                                <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(22,163,74,0.06)', color: 'var(--success)' }}>
-                                                                    <Icon icon="solar:play-linear" width={14} /> เริ่ม
-                                                                </button>
+                                                                {match.status === 'waiting' && (
+                                                                    <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(22,163,74,0.06)', color: 'var(--success)' }}>
+                                                                        <Icon icon="solar:play-linear" width={14} /> เริ่ม
+                                                                    </button>
+                                                                )}
+                                                                {match.status === 'playing' && (
+                                                                    <div className="flex gap-1.5">
+                                                                        <button onClick={() => handleCancelMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }}>
+                                                                            <Icon icon="solar:trash-bin-trash-bold" width={14} /> ยกเลิก
+                                                                        </button>
+                                                                        <button onClick={() => updateMatchStatus(match.id, 'finished')} className="btn btn-sm" style={{ background: 'rgba(249,115,22,0.06)', color: 'var(--orange-500)' }}>
+                                                                            <Icon icon="solar:check-circle-linear" width={14} /> จบ
+                                                                        </button>
+                                                                    </div>
+                                                                )}
                                                             </>
-                                                        )}
-                                                        {match.status === 'playing' && (
-                                                            <div className="flex gap-1.5">
-                                                                <button onClick={() => handleCancelMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }}>
-                                                                    <Icon icon="solar:trash-bin-trash-bold" width={14} /> ยกเลิก
-                                                                </button>
-                                                                <button onClick={() => updateMatchStatus(match.id, 'finished')} className="btn btn-sm" style={{ background: 'rgba(249,115,22,0.06)', color: 'var(--orange-500)' }}>
-                                                                    <Icon icon="solar:check-circle-linear" width={14} /> จบ
-                                                                </button>
-                                                            </div>
                                                         )}
                                                     </div>
                                                 )}
@@ -1300,7 +1339,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} {playerStats[mp.user_id]?.matchNums.length > 0 ? `(#${playerStats[mp.user_id].matchNums.join(', #')})` : ''}
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1344,7 +1383,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? '#2563eb' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} {playerStats[mp.user_id]?.matchNums.length > 0 ? `(#${playerStats[mp.user_id].matchNums.join(', #')})` : ''}
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1361,58 +1400,6 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         </div>
                                     );
                                 })}
-                            </div>
-                        )}
-
-                        {/* My Bill Summary (Personal for Admin) */}
-                        {myBill && (
-                            <div className={`card p-6 border-none shadow-xl transition-all duration-500 mt-6 animate-in ${players.find(p => p.user_id === currentUserId)?.payment_status === 'paid'
-                                ? 'bg-gradient-to-br from-green-50 to-white ring-1 ring-green-100'
-                                : 'bg-gradient-to-br from-blue-50 to-white ring-1 ring-blue-100'
-                                }`}>
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-inner transition-colors duration-500 ${players.find(p => p.user_id === currentUserId)?.payment_status === 'paid' ? 'bg-green-500' : 'bg-blue-500'
-                                            }`}>
-                                            <Icon icon="solar:wallet-bold-duotone" width={22} />
-                                        </div>
-                                        <div>
-                                            <h2 className="text-lg font-black tracking-tight text-gray-900">ค่าใช้จ่ายของฉัน</h2>
-                                            <p className="text-xs font-bold text-gray-500">รวมค่าสนามและค่าลูกแบด</p>
-                                        </div>
-                                    </div>
-                                    {players.find(p => p.user_id === currentUserId)?.payment_status === 'paid' && (
-                                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-green-500 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-200 animate-in fade-in zoom-in">
-                                            <Icon icon="solar:check-circle-bold" width={14} />
-                                            จ่ายแล้ว
-                                        </span>
-                                    )}
-                                </div>
-
-
-                                <div className="bg-white/60 backdrop-blur-xl border border-white/80 rounded-2xl p-4 shadow-sm mb-4">
-                                    <div className="flex items-baseline gap-2 mb-3 border-b border-gray-100 pb-3">
-                                        <span className="text-3xl font-black text-gray-900 tracking-tighter">
-                                            ฿{myBill.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                        </span>
-                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">ยอดรวม</span>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span className="font-bold text-gray-500">ค่าสนาม</span>
-                                            <span className="font-black text-gray-900">฿{event?.entry_fee}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span className="font-bold text-gray-500">ค่าลูกแบด <span className="text-xs font-bold text-gray-400">({myBill.totalShuttlecocks} ลูก)</span></span>
-                                            <span className="font-black text-blue-600">+ ฿{Math.max(0, myBill.amount - (event?.entry_fee || 0)).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span className="font-bold text-gray-500">จำนวนเกมที่เล่น</span>
-                                            <span className="font-black text-gray-900">{myBill.totalGames} เกม</span>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         )}
 
@@ -1454,9 +1441,36 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 </button>
 
                                 {showPaymentSection && (
-                                    <div>
+                                    <div className="flex flex-col">
+                                        {/* Payment Search Box */}
+                                        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50">
+                                            <div className="relative">
+                                                <Icon icon="solar:magnifer-linear" width={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="ค้นหาชื่อผู้เล่นเพื่อชำระเงิน..."
+                                                    value={paymentSearchQuery}
+                                                    onChange={(e) => setPaymentSearchQuery(e.target.value)}
+                                                    className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-gray-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all"
+                                                />
+                                                {paymentSearchQuery && (
+                                                    <button
+                                                        onClick={() => setPaymentSearchQuery('')}
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                                                    >
+                                                        <Icon icon="solar:close-circle-bold" width={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
                                         {/* Sort: pending first, then paid */}
                                         {[...players]
+                                            .filter(ep => {
+                                                if (!paymentSearchQuery) return true;
+                                                const prof = ep.profiles as unknown as Profile;
+                                                return prof?.display_name?.toLowerCase().includes(paymentSearchQuery.toLowerCase());
+                                            })
                                             .sort((a, b) => {
                                                 if (a.payment_status !== b.payment_status) return a.payment_status === 'pending' ? -1 : 1;
                                                 return 0;
@@ -1544,6 +1558,20 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     </div>
                                                 );
                                             })}
+
+                                        {players.filter(ep => {
+                                            if (!paymentSearchQuery) return true;
+                                            const prof = ep.profiles as unknown as Profile;
+                                            return prof?.display_name?.toLowerCase().includes(paymentSearchQuery.toLowerCase());
+                                        }).length === 0 && (
+                                                <div className="text-center py-10 bg-gray-50/30">
+                                                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                                                        <Icon icon="solar:magnifer-zoom-out-linear" width={24} className="text-gray-400" />
+                                                    </div>
+                                                    <p className="text-sm font-bold text-gray-500">ไม่พบรายชื่อผู้เล่นที่ค้นหา</p>
+                                                    <p className="text-[10px] text-gray-400 mt-1">ลองเปลี่ยนคำค้นหาใหม่อีกครั้ง</p>
+                                                </div>
+                                            )}
                                     </div>
                                 )}
                             </div>
@@ -1597,21 +1625,39 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                             </button>
                                         </div>
 
-                                        <button
-                                            onClick={() => setWinner(winner === 'Draw' ? null : 'Draw')}
-                                            className="w-full p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-md"
-                                            style={{
-                                                background: winner === 'Draw' ? '#9333ea' : 'white',
-                                                color: winner === 'Draw' ? 'white' : '#9333ea',
-                                                borderColor: '#9333ea',
-                                                transform: winner === 'Draw' ? 'scale(1.01)' : 'none',
-                                            }}
-                                        >
-                                            <div className={`p-2 rounded-full ${winner === 'Draw' ? 'bg-white/20' : 'bg-purple-50'}`}>
-                                                <Icon icon={winner === 'Draw' ? 'solar:hand-shake-bold' : 'solar:hand-shake-linear'} width={24} />
-                                            </div>
-                                            <span className="font-bold">เสมอ (Draw)</span>
-                                        </button>
+                                        <div className="flex gap-3">
+                                            <button
+                                                onClick={() => setWinner(winner === 'Draw' ? null : 'Draw')}
+                                                className="flex-1 p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-md"
+                                                style={{
+                                                    background: winner === 'Draw' ? '#9333ea' : 'white',
+                                                    color: winner === 'Draw' ? 'white' : '#9333ea',
+                                                    borderColor: '#9333ea',
+                                                    transform: winner === 'Draw' ? 'scale(1.01)' : 'none',
+                                                }}
+                                            >
+                                                <div className={`p-2 rounded-full ${winner === 'Draw' ? 'bg-white/20' : 'bg-purple-50'}`}>
+                                                    <Icon icon={winner === 'Draw' ? 'solar:hand-shake-bold' : 'solar:hand-shake-linear'} width={20} />
+                                                </div>
+                                                <span className="font-bold text-sm">เสมอ</span>
+                                            </button>
+
+                                            <button
+                                                onClick={() => setWinner(winner === 'None' ? null : 'None')}
+                                                className="flex-1 p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-md"
+                                                style={{
+                                                    background: winner === 'None' ? 'var(--gray-600)' : 'white',
+                                                    color: winner === 'None' ? 'white' : 'var(--gray-600)',
+                                                    borderColor: 'var(--gray-600)',
+                                                    transform: winner === 'None' ? 'scale(1.01)' : 'none',
+                                                }}
+                                            >
+                                                <div className={`p-2 rounded-full ${winner === 'None' ? 'bg-white/20' : 'bg-gray-50'}`}>
+                                                    <Icon icon={winner === 'None' ? 'solar:close-circle-bold' : 'solar:close-circle-linear'} width={20} />
+                                                </div>
+                                                <span className="font-bold text-sm">ไม่แจ้งผล</span>
+                                            </button>
+                                        </div>
                                     </div>
 
                                     <button

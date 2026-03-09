@@ -44,6 +44,7 @@ export interface Match {
     id: string;
     event_id: string;
     court_number: string;
+    match_number?: number;
     shuttlecock_numbers: string[] | null;
     status: 'waiting' | 'playing' | 'finished';
     team_a_score: number;

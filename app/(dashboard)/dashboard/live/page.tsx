@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/src/lib/supabase/client';
 import type { Event, Match, Profile, EventPlayer } from '@/src/types';
 import { Icon } from '@iconify/react';
@@ -125,6 +125,23 @@ export default function LiveBoardPage() {
         };
     }, [event?.id, event?.entry_fee, event?.shuttlecock_price]); // Event prices and ID dependencies
 
+    const playerStats = useMemo(() => {
+        const stats: Record<string, { total: number, matchNums: number[] }> = {};
+        eventPlayers.forEach(p => { stats[p.user_id] = { total: 0, matchNums: [] }; });
+        matches.forEach((m, idx) => {
+            const mNum = m.match_number || (idx + 1);
+            m.match_players?.forEach(mp => {
+                if (stats[mp.user_id]) {
+                    if (m.status === 'playing' || m.status === 'finished') {
+                        stats[mp.user_id].total++;
+                        stats[mp.user_id].matchNums.push(mNum);
+                    }
+                }
+            });
+        });
+        return stats;
+    }, [eventPlayers, matches]);
+
     if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
 
     if (!event) return (
@@ -182,13 +199,20 @@ export default function LiveBoardPage() {
                     <div className="flex-1 text-center p-3 rounded-xl border border-dashed border-gray-200" style={{ background: 'var(--white)' }}>
                         {tA.map((mp) => {
                             const isMe = mp.user_id === currentUserId;
+                            const stats = playerStats[mp.user_id];
                             return (
-                                <p key={mp.id} className="text-sm truncate" style={{
+                                <p key={mp.id} className="text-base truncate" style={{
                                     color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
                                     fontWeight: isMe ? '900' : 'bold',
                                     textShadow: isMe ? '0 0 1px rgba(249,115,22,0.3)' : 'none',
                                 }}>
-                                    {truncateName((mp.profiles as unknown as Profile)?.display_name, 12)} {isMe && '(คุณ)'}
+                                    {truncateName((mp.profiles as unknown as Profile)?.display_name, 16)}
+                                    {stats?.matchNums.length > 0 && (
+                                        <span className="text-[10px] font-bold text-orange-500 ml-1 opacity-70">
+                                            (#{stats.matchNums.join(', #')})
+                                        </span>
+                                    )}
+                                    {isMe && ' (คุณ)'}
                                 </p>
                             );
                         })}
@@ -211,13 +235,20 @@ export default function LiveBoardPage() {
                     <div className="flex-1 text-center p-3 rounded-xl border border-dashed border-gray-200" style={{ background: 'var(--white)' }}>
                         {tB.map((mp) => {
                             const isMe = mp.user_id === currentUserId;
+                            const stats = playerStats[mp.user_id];
                             return (
-                                <p key={mp.id} className="text-sm truncate" style={{
+                                <p key={mp.id} className="text-base truncate" style={{
                                     color: isMe ? '#2563eb' : 'var(--gray-900)',
                                     fontWeight: isMe ? '900' : 'bold',
                                     textShadow: isMe ? '0 0 1px rgba(59,130,246,0.3)' : 'none',
                                 }}>
-                                    {truncateName((mp.profiles as unknown as Profile)?.display_name, 12)} {isMe && '(คุณ)'}
+                                    {truncateName((mp.profiles as unknown as Profile)?.display_name, 16)}
+                                    {stats?.matchNums.length > 0 && (
+                                        <span className="text-[10px] font-bold text-blue-500 ml-1 opacity-70">
+                                            (#{stats.matchNums.join(', #')})
+                                        </span>
+                                    )}
+                                    {isMe && ' (คุณ)'}
                                 </p>
                             );
                         })}
@@ -275,7 +306,7 @@ export default function LiveBoardPage() {
                             </h2>
                             <div className="h-px flex-1 bg-gray-100 ml-2" />
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4">
                             {section.items.map(renderMatchCard)}
                         </div>
                     </div>
@@ -294,7 +325,7 @@ export default function LiveBoardPage() {
                             </h2>
                             <div className="h-px flex-1 bg-gray-100 ml-2" />
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4">
                             {section.items.map(renderMatchCard)}
                         </div>
                     </div>

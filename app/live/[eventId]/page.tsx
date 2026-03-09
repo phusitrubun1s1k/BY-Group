@@ -50,6 +50,23 @@ export default function PublicLiveBoardPage() {
         }
     }, [eventId, loadData]);
 
+    const playerStats = useMemo(() => {
+        const stats: Record<string, { total: number, matchNums: number[] }> = {};
+        players.forEach(p => { stats[p.user_id] = { total: 0, matchNums: [] }; });
+        matches.forEach((m, idx) => {
+            const mNum = m.match_number || (idx + 1);
+            m.match_players?.forEach(mp => {
+                if (stats[mp.user_id]) {
+                    if (m.status === 'playing' || m.status === 'finished') {
+                        stats[mp.user_id].total++;
+                        stats[mp.user_id].matchNums.push(mNum);
+                    }
+                }
+            });
+        });
+        return stats;
+    }, [players, matches]);
+
     const statusCfg: any = {
         waiting: { label: 'รอกดเริ่ม', badge: 'badge-muted' },
         playing: { label: 'กำลังแข่ง', badge: 'badge-warning' },
@@ -117,9 +134,9 @@ export default function PublicLiveBoardPage() {
                             <p className="text-sm font-bold text-gray-400">ยังไม่มีการเพิ่มแมตช์</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-6">
                             {matches.filter(m => m.status !== 'finished').map((match, i) => (
-                                <MatchCard key={match.id} match={match} index={i} statusCfg={statusCfg} />
+                                <MatchCard key={match.id} match={match} index={i} statusCfg={statusCfg} playerStats={playerStats} />
                             ))}
                             {/* If no active matches, show a placeholder if we have finished matches */}
                             {matches.filter(m => m.status !== 'finished').length === 0 && matches.length > 0 && (
@@ -141,7 +158,7 @@ export default function PublicLiveBoardPage() {
                         </div>
                         <div className="space-y-3 opacity-80">
                             {matches.filter(m => m.status === 'finished').reverse().slice(0, 10).map((match, i) => (
-                                <MatchCard key={match.id} match={match} statusCfg={statusCfg} simplified />
+                                <MatchCard key={match.id} match={match} statusCfg={statusCfg} simplified playerStats={playerStats} />
                             ))}
                         </div>
                     </section>
@@ -151,7 +168,7 @@ export default function PublicLiveBoardPage() {
     );
 }
 
-function MatchCard({ match, index, statusCfg, simplified = false }: { match: Match, index?: number, statusCfg: any, simplified?: boolean }) {
+function MatchCard({ match, index, statusCfg, simplified = false, playerStats }: { match: Match, index?: number, statusCfg: any, simplified?: boolean, playerStats: any }) {
     const tA = match.match_players?.filter(mp => mp.team === 'A') || [];
     const tB = match.match_players?.filter(mp => mp.team === 'B') || [];
     const aWon = match.status === 'finished' && match.team_a_score > match.team_b_score;
@@ -165,11 +182,21 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                         <span className="text-[10px] font-black p-1 rounded bg-gray-100 text-gray-500">คอร์ท {match.court_number}</span>
                         <div className="flex items-center gap-1 min-w-0 truncate">
                             <span className={`text-[11px] font-bold truncate ${aWon ? 'text-orange-600' : 'text-gray-600'}`}>
-                                {tA.map(mp => truncateName((mp.profiles as unknown as Profile).display_name, 12)).join(' + ')}
+                                {tA.map(mp => {
+                                    const name = truncateName((mp.profiles as unknown as Profile).display_name, 12);
+                                    const stats = playerStats[mp.user_id];
+                                    const suffix = stats?.matchNums.length > 0 ? ` (#${stats.matchNums.join(', #')})` : '';
+                                    return name + suffix;
+                                }).join(' + ')}
                             </span>
                             <span className="text-[9px] font-bold text-gray-300 italic">vs</span>
                             <span className={`text-[11px] font-bold truncate ${bWon ? 'text-blue-600' : 'text-gray-600'}`}>
-                                {tB.map(mp => truncateName((mp.profiles as unknown as Profile).display_name, 12)).join(' + ')}
+                                {tB.map(mp => {
+                                    const name = truncateName((mp.profiles as unknown as Profile).display_name, 12);
+                                    const stats = playerStats[mp.user_id];
+                                    const suffix = stats?.matchNums.length > 0 ? ` (#${stats.matchNums.join(', #')})` : '';
+                                    return name + suffix;
+                                }).join(' + ')}
                             </span>
                         </div>
                     </div>
@@ -218,7 +245,14 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                             const prof = mp.profiles as unknown as Profile;
                             return (
                                 <div key={idx} className="flex flex-col">
-                                    <span className={`text-xs font-black truncate ${aWon ? 'text-orange-900' : 'text-gray-900'}`}>{truncateName(prof.display_name, 14)}</span>
+                                    <span className={`text-base font-black truncate ${aWon ? 'text-orange-900' : 'text-gray-900'}`}>
+                                        {truncateName(prof.display_name, 20)}
+                                        {playerStats[mp.user_id]?.matchNums.length > 0 && (
+                                            <span className="text-[11px] font-bold text-orange-500 ml-1.5 opacity-80">
+                                                (#{playerStats[mp.user_id].matchNums.join(', #')})
+                                            </span>
+                                        )}
+                                    </span>
                                     {prof.skill_level && (
                                         <span className={`text-[9px] font-bold ${aWon ? 'text-orange-500' : 'text-gray-400'}`}>{prof.skill_level}</span>
                                     )}
@@ -242,7 +276,14 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                             const prof = mp.profiles as unknown as Profile;
                             return (
                                 <div key={idx} className="flex flex-col items-end">
-                                    <span className={`text-xs font-black truncate ${bWon ? 'text-blue-900' : 'text-gray-900'}`}>{truncateName(prof.display_name, 14)}</span>
+                                    <span className={`text-base font-black truncate ${bWon ? 'text-blue-900' : 'text-gray-900'}`}>
+                                        {playerStats[mp.user_id]?.matchNums.length > 0 && (
+                                            <span className="text-[11px] font-bold text-blue-500 mr-1.5 opacity-80">
+                                                (#{playerStats[mp.user_id].matchNums.join(', #')})
+                                            </span>
+                                        )}
+                                        {truncateName(prof.display_name, 20)}
+                                    </span>
                                     {prof.skill_level && (
                                         <span className={`text-[10px] font-bold ${bWon ? 'text-blue-500' : 'text-gray-400'}`}>{prof.skill_level}</span>
                                     )}

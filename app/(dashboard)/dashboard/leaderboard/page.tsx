@@ -101,10 +101,12 @@ export default function LeaderboardPage() {
             achievementsMap[ub.user_id] = achs;
         });
 
-        const dataWithAchievements = (rows || []).map(r => ({
-            ...r,
-            achievements: achievementsMap[r.user_id] || []
-        }));
+        const dataWithAchievements = (rows || [])
+            .filter(r => r.total_games > 0)
+            .map(r => ({
+                ...r,
+                achievements: achievementsMap[r.user_id] || []
+            }));
 
         setData(dataWithAchievements as LeaderboardEntry[]);
         setLoading(false);
