@@ -28,7 +28,7 @@ const GUEST_SKILL_OPTIONS: SelectOption[] = [
 ];
 
 // Get skill color from the function matching index.ts
-const getSkillColor = (level: string | null) => {
+const getSkillColor = (level: string | null | undefined) => {
     if (['เปาะแปะ', 'BG', 'N', 'S'].includes(level || '')) return '#16a34a';
     if (['P-', 'P', 'P+'].includes(level || '')) return '#2563eb';
     if (['C', 'B', 'A'].includes(level || '')) return '#9333ea';
