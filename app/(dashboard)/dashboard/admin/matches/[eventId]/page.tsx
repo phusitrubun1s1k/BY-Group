@@ -122,7 +122,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                 }
             });
 
-            const amount = Math.ceil((event.entry_fee || 0) + totalShuttleCost) - (p.discount || 0);
+            const amount = Math.ceil((event.entry_fee || 0) + totalShuttleCost) + (p.additional_cost || 0) - (p.discount || 0);
             bills[p.user_id] = Math.max(0, amount);
         });
         return bills;
@@ -621,6 +621,21 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             toast.error('บันทึกส่วนลดไม่สำเร็จ');
             // Revert
             setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, discount: ep.discount } : p));
+        }
+    };
+
+    const updateAdditionalCost = async (ep: EventPlayer, additionalCostValue: number) => {
+        setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, additional_cost: additionalCostValue } : p));
+
+        const supabase = createClient();
+        const { error } = await supabase
+            .from('event_players')
+            .update({ additional_cost: additionalCostValue })
+            .eq('id', ep.id);
+
+        if (error) {
+            toast.error('บันทึกค่าใช้จ่ายเพิ่มเติมไม่สำเร็จ');
+            setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, additional_cost: ep.additional_cost } : p));
         }
     };
 
@@ -1494,7 +1509,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             totalShuttleCost += matchCost / matchPlayerCount;
                                                         }
                                                     });
-                                                    return Math.ceil((event.entry_fee || 0) + totalShuttleCost);
+                                                    return Math.ceil((event.entry_fee || 0) + totalShuttleCost) + (ep.additional_cost || 0);
                                                 })();
                                                 const hasDiscount = (ep.discount || 0) > 0;
                                                 return (
@@ -1518,6 +1533,25 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </p>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0 ml-2">
+                                                            {/* Additional Cost Input */}
+                                                            <div className="flex items-center gap-1">
+                                                                <input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    placeholder="0"
+                                                                    defaultValue={ep.additional_cost || ''}
+                                                                    onBlur={(e) => {
+                                                                        const val = parseInt(e.target.value) || 0;
+                                                                        if (val !== (ep.additional_cost || 0)) updateAdditionalCost(ep, val);
+                                                                    }}
+                                                                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                                                    className="w-16 text-right text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 focus:outline-none transition-all"
+                                                                    style={{ background: (ep.additional_cost || 0) > 0 ? 'rgba(239,68,68,0.04)' : 'white', color: (ep.additional_cost || 0) > 0 ? '#ef4444' : 'var(--gray-600)' }}
+                                                                    title="ค่าใช้จ่ายเพิ่มเติม (บาท)"
+                                                                />
+                                                                <span className="text-[10px] text-gray-400 font-medium">+เพิ่ม</span>
+                                                            </div>
+
                                                             {/* Discount Input */}
                                                             <div className="flex items-center gap-1">
                                                                 <input

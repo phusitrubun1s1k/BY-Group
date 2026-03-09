@@ -39,6 +39,7 @@ export interface EventPlayer {
     is_checked_in: boolean;
     is_substitute: boolean;
     discount: number;
+    additional_cost?: number;
     created_at: string;
     profiles?: Profile;
     events?: Event;

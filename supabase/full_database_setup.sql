@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS event_players (
   user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid')),
   slip_url TEXT,
+  additional_cost INT DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(event_id, user_id)
 );

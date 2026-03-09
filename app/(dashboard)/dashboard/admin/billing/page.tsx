@@ -97,21 +97,27 @@ export default function AdminBillingPage() {
                     .from('match_players')
                     .select('*, matches!inner(id, event_id, status, shuttlecock_numbers)');
 
-                // Use match data to compute games and shuttlecocks
-                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[] }> = {};
+                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[]; shuttlecockCost: number }> = {};
                 if (allMP) {
+                    const matchPlayerCounts: Record<string, number> = {};
+                    allMP.forEach(mp => {
+                        matchPlayerCounts[mp.match_id] = (matchPlayerCounts[mp.match_id] || 0) + 1;
+                    });
+
                     allMP.forEach(mp => {
                         const mStatus = mp.matches?.status;
                         if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                         const key = `${mp.user_id}_${mp.matches.event_id}`;
-                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [] };
+                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [], shuttlecockCost: 0 };
 
                         matchDetails[key].gamesPlayed += 1;
                         const matchObj = Array.isArray(mp.matches) ? mp.matches[0] : mp.matches;
                         if (matchObj?.shuttlecock_numbers) {
                             const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
                             matchDetails[key].shuttlecocks.push(...nums);
+                            const matchPCount = matchPlayerCounts[mp.match_id] || 4;
+                            matchDetails[key].shuttlecockCost += nums.length / matchPCount;
                         }
                     });
                 }
@@ -124,11 +130,10 @@ export default function AdminBillingPage() {
                     const uid = ep.user_id;
                     const event = ep.events;
                     const eventId = event?.id;
-                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [] };
+                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [], shuttlecockCost: 0 };
 
-                    // Cost calculation similar to matches page: flat entry fee + (price * my total shuttles)
-                    // We don't de-duplicate here if they used 5 shuttles in 2 matches, they pay for 5.
-                    const amount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length);
+                    // Cost calculation similar to matches page
+                    const amount = Math.ceil((event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecockCost)) + (ep.additional_cost || 0) - (ep.discount || 0);
 
                     const billKey = `${uid}_${eventId}`; // Keep separate bill per event per user
 
@@ -187,10 +192,15 @@ export default function AdminBillingPage() {
 
                 const { data: matchData } = await supabase
                     .from('match_players')
-                    .select('user_id, matches!inner(id, status, shuttlecock_numbers)')
+                    .select('user_id, match_id, matches!inner(id, status, shuttlecock_numbers)')
                     .eq('matches.event_id', selectedEventId);
 
-                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[] }> = {};
+                const matchPlayerCounts: Record<string, number> = {};
+                (matchData || []).forEach(m => {
+                    matchPlayerCounts[m.match_id] = (matchPlayerCounts[m.match_id] || 0) + 1;
+                });
+
+                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[]; shuttlecockCost: number }> = {};
                 (matchData || []).forEach(m => {
                     const matchArr = Array.isArray(m.matches) ? m.matches : [m.matches];
                     const matchObj = matchArr[0];
@@ -200,18 +210,20 @@ export default function AdminBillingPage() {
                     if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                     const uid = m.user_id;
-                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [] };
+                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [], shuttlecockCost: 0 };
 
                     userMatchDetails[uid].games += 1;
                     if (matchObj?.shuttlecock_numbers) {
                         const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
                         userMatchDetails[uid].shuttlecocks.push(...nums);
+                        const matchPCount = matchPlayerCounts[m.match_id] || 4;
+                        userMatchDetails[uid].shuttlecockCost += nums.length / matchPCount;
                     }
                 });
 
                 const playerBills: PlayerBill[] = (eventPlayers as any[]).map(ep => {
-                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [] };
-                    const amount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length);
+                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [], shuttlecockCost: 0 };
+                    const amount = Math.ceil((event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecockCost)) + (ep.additional_cost || 0) - (ep.discount || 0);
                     return {
                         eventPlayerId: ep.id,
                         userId: ep.user_id,
