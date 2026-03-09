@@ -4,6 +4,7 @@ export interface Profile {
     full_name?: string;
     display_name: string;
     role: 'admin' | 'user';
+    phone?: string;
     skill_level?: string;
     avatar_url?: string | null;
     mmr?: number;
