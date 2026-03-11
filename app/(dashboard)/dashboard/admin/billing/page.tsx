@@ -15,12 +15,15 @@ interface PlayerBill {
     displayName: string;
     gamesPlayed: number;
     amount: number; // Current Pending for selected period
+    baseAmount?: number; // entry_fee + shuttlecock cost (before additional/discount)
     totalOwed?: number; // Grand Total for selected period
     totalPaid?: number; // Total Paid for selected period
     paymentStatus: 'pending' | 'paid';
     slipUrl: string | null;
     shuttlecockNums?: string;
     shuttlecockCount?: number;
+    additionalCost?: number;
+    discount?: number;
     eventDate?: string;
 }
 
@@ -97,27 +100,20 @@ export default function AdminBillingPage() {
                     .from('match_players')
                     .select('*, matches!inner(id, event_id, status, shuttlecock_numbers)');
 
-                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[]; shuttlecockCost: number }> = {};
+                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[] }> = {};
                 if (allMP) {
-                    const matchPlayerCounts: Record<string, number> = {};
-                    allMP.forEach(mp => {
-                        matchPlayerCounts[mp.match_id] = (matchPlayerCounts[mp.match_id] || 0) + 1;
-                    });
-
                     allMP.forEach(mp => {
                         const mStatus = mp.matches?.status;
                         if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                         const key = `${mp.user_id}_${mp.matches.event_id}`;
-                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [], shuttlecockCost: 0 };
+                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [] };
 
                         matchDetails[key].gamesPlayed += 1;
                         const matchObj = Array.isArray(mp.matches) ? mp.matches[0] : mp.matches;
                         if (matchObj?.shuttlecock_numbers) {
                             const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
                             matchDetails[key].shuttlecocks.push(...nums);
-                            const matchPCount = matchPlayerCounts[mp.match_id] || 4;
-                            matchDetails[key].shuttlecockCost += nums.length / matchPCount;
                         }
                     });
                 }
@@ -130,12 +126,14 @@ export default function AdminBillingPage() {
                     const uid = ep.user_id;
                     const event = ep.events;
                     const eventId = event?.id;
-                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [], shuttlecockCost: 0 };
+                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [] };
 
-                    // Cost calculation similar to matches page
-                    const amount = Math.ceil((event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecockCost)) + (ep.additional_cost || 0) - (ep.discount || 0);
+                    // Cost: entry_fee + (shuttlecock_count × price) + additional_cost - discount
+                    const amount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length) + (ep.additional_cost || 0) - (ep.discount || 0);
 
                     const billKey = `${uid}_${eventId}`; // Keep separate bill per event per user
+
+                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length);
 
                     if (!userSummary[billKey]) {
                         userSummary[billKey] = {
@@ -144,16 +142,22 @@ export default function AdminBillingPage() {
                             displayName: ep.profiles?.display_name || 'ไม่ทราบชื่อ',
                             gamesPlayed: 0,
                             amount: 0,
+                            baseAmount: 0,
                             totalOwed: 0,
                             totalPaid: 0,
                             paymentStatus: ep.payment_status,
                             slipUrl: ep.slip_url,
                             shuttlecocks: [],
+                            additionalCost: 0,
+                            discount: 0,
                             eventDate: eventDate
                         };
                     }
+                    userSummary[billKey].additionalCost = (userSummary[billKey].additionalCost || 0) + (ep.additional_cost || 0);
+                    userSummary[billKey].discount = (userSummary[billKey].discount || 0) + (ep.discount || 0);
 
                     userSummary[billKey].gamesPlayed += detail.gamesPlayed;
+                    userSummary[billKey].baseAmount = (userSummary[billKey].baseAmount || 0) + baseAmount;
                     userSummary[billKey].totalOwed += amount;
                     userSummary[billKey].shuttlecocks.push(...detail.shuttlecocks);
 
@@ -192,15 +196,10 @@ export default function AdminBillingPage() {
 
                 const { data: matchData } = await supabase
                     .from('match_players')
-                    .select('user_id, match_id, matches!inner(id, status, shuttlecock_numbers)')
+                    .select('user_id, matches!inner(id, status, shuttlecock_numbers)')
                     .eq('matches.event_id', selectedEventId);
 
-                const matchPlayerCounts: Record<string, number> = {};
-                (matchData || []).forEach(m => {
-                    matchPlayerCounts[m.match_id] = (matchPlayerCounts[m.match_id] || 0) + 1;
-                });
-
-                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[]; shuttlecockCost: number }> = {};
+                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[] }> = {};
                 (matchData || []).forEach(m => {
                     const matchArr = Array.isArray(m.matches) ? m.matches : [m.matches];
                     const matchObj = matchArr[0];
@@ -210,30 +209,32 @@ export default function AdminBillingPage() {
                     if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                     const uid = m.user_id;
-                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [], shuttlecockCost: 0 };
+                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [] };
 
                     userMatchDetails[uid].games += 1;
                     if (matchObj?.shuttlecock_numbers) {
                         const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
                         userMatchDetails[uid].shuttlecocks.push(...nums);
-                        const matchPCount = matchPlayerCounts[m.match_id] || 4;
-                        userMatchDetails[uid].shuttlecockCost += nums.length / matchPCount;
                     }
                 });
 
                 const playerBills: PlayerBill[] = (eventPlayers as any[]).map(ep => {
-                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [], shuttlecockCost: 0 };
-                    const amount = Math.ceil((event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecockCost)) + (ep.additional_cost || 0) - (ep.discount || 0);
+                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [] };
+                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length);
+                    const amount = baseAmount + (ep.additional_cost || 0) - (ep.discount || 0);
                     return {
                         eventPlayerId: ep.id,
                         userId: ep.user_id,
                         displayName: ep.profiles?.display_name || 'ไม่ทราบชื่อ',
                         gamesPlayed: detail.games,
                         amount,
+                        baseAmount,
                         paymentStatus: ep.payment_status,
                         slipUrl: ep.slip_url,
                         shuttlecockCount: detail.shuttlecocks.length,
-                        shuttlecockNums: detail.shuttlecocks.join(', ')
+                        shuttlecockNums: detail.shuttlecocks.join(', '),
+                        additionalCost: ep.additional_cost || 0,
+                        discount: ep.discount || 0
                     };
                 });
 
@@ -268,6 +269,8 @@ export default function AdminBillingPage() {
                 .select('*, matches!inner(id, event_id, status, shuttlecock_numbers)')
                 .eq('user_id', userId);
 
+            // Count players per match for proportional cost calculation
+
             const matchDetails: Record<string, { games: number; shuttlecocks: string[] }> = {};
             (mpData || []).forEach(mp => {
                 const mStatus = mp.matches?.status;
@@ -286,7 +289,7 @@ export default function AdminBillingPage() {
 
             const history = (epData || []).map((ep: any) => {
                 const detail = matchDetails[ep.event_id] || { games: 0, shuttlecocks: [] };
-                const amount = (ep.events?.entry_fee || 0) + ((ep.events?.shuttlecock_price || 0) * detail.shuttlecocks.length);
+                const amount = (ep.events?.entry_fee || 0) + ((ep.events?.shuttlecock_price || 0) * detail.shuttlecocks.length) + (ep.additional_cost || 0) - (ep.discount || 0);
 
                 return {
                     id: ep.id,
@@ -590,10 +593,13 @@ export default function AdminBillingPage() {
                         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                             {/* Table Header */}
                             <div className="hidden sm:grid grid-cols-12 gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider" style={{ background: 'var(--gray-50)', color: 'var(--gray-500)', borderBottom: '1px solid var(--gray-200)' }}>
-                                <div className="col-span-4">ผู้เล่น</div>
-                                <div className="col-span-2 text-center">เกมสะสม</div>
-                                <div className="col-span-2 text-center">{selectedEventId === 'all' ? 'ยอดรวมทั้งหมด' : 'ยอดที่ต้องจ่าย'}</div>
-                                <div className="col-span-1 text-center">{selectedEventId === 'all' ? 'ค้างจ่าย' : 'ยอดเงิน'}</div>
+                                <div className="col-span-3">ผู้เล่น</div>
+                                <div className="col-span-1 text-center">เกม</div>
+                                <div className="col-span-1 text-center">ยอดปกติ</div>
+                                <div className="col-span-1 text-center">เพิ่ม</div>
+                                <div className="col-span-1 text-center">ลด</div>
+                                <div className="col-span-1 text-center">{selectedEventId === 'all' ? 'ยอดรวม' : 'ยอดจ่าย'}</div>
+                                <div className="col-span-1 text-center">{selectedEventId === 'all' ? 'ค้าง' : 'เงิน'}</div>
                                 <div className="col-span-1 text-center">สถานะ</div>
                                 <div className="col-span-2 text-center">จัดการ</div>
                             </div>
@@ -620,7 +626,7 @@ export default function AdminBillingPage() {
                                             }}
                                         >
                                             {/* Player */}
-                                            <div className="sm:col-span-4 flex items-center gap-3">
+                                            <div className="sm:col-span-3 flex items-center gap-3">
                                                 <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: 'var(--gray-900)', color: 'var(--white)' }}>
                                                     {bill.displayName.charAt(0).toUpperCase()}
                                                 </div>
@@ -629,21 +635,44 @@ export default function AdminBillingPage() {
                                                         {truncateName(bill.displayName, 16)}
                                                     </p>
                                                     <p className="text-[11px] sm:hidden" style={{ color: 'var(--gray-500)' }}>
-                                                        {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''} · ค้าง ฿{bill.amount.toFixed(0)}
+                                                        {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''}{(bill.additionalCost || 0) > 0 ? ` · +฿${bill.additionalCost}` : ''} · ค้าง ฿{bill.amount.toFixed(0)}
                                                     </p>
                                                 </div>
                                             </div>
 
                                             {/* Games */}
-                                            <div className="hidden sm:flex flex-col col-span-2 items-center justify-center">
+                                            <div className="hidden sm:flex flex-col col-span-1 items-center justify-center">
                                                 <span className="text-sm font-medium" style={{ color: 'var(--gray-700)' }}>{bill.gamesPlayed} เกม</span>
                                                 {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? (
-                                                    <span className="text-[10px] font-bold" style={{ color: 'var(--gray-400)' }}>{bill.shuttlecockCount} ลูก (#{bill.shuttlecockNums})</span>
+                                                    <span className="text-[10px] font-bold" style={{ color: 'var(--gray-400)' }}>{bill.shuttlecockCount} ลูก</span>
                                                 ) : null}
                                             </div>
 
+                                            {/* Base Amount (before additional/discount) */}
+                                            <div className="hidden sm:flex col-span-1 justify-center">
+                                                <span className="text-sm font-medium" style={{ color: 'var(--gray-700)' }}>฿{(bill.baseAmount || 0).toFixed(0)}</span>
+                                            </div>
+
+                                            {/* Additional Cost */}
+                                            <div className="hidden sm:flex col-span-1 justify-center">
+                                                {(bill.additionalCost || 0) > 0 ? (
+                                                    <span className="text-sm font-bold" style={{ color: '#ef4444' }}>+฿{bill.additionalCost}</span>
+                                                ) : (
+                                                    <span className="text-sm" style={{ color: 'var(--gray-300)' }}>-</span>
+                                                )}
+                                            </div>
+
+                                            {/* Discount */}
+                                            <div className="hidden sm:flex col-span-1 justify-center">
+                                                {(bill.discount || 0) > 0 ? (
+                                                    <span className="text-sm font-bold" style={{ color: '#7c3aed' }}>-฿{bill.discount}</span>
+                                                ) : (
+                                                    <span className="text-sm" style={{ color: 'var(--gray-300)' }}>-</span>
+                                                )}
+                                            </div>
+
                                             {/* Grand Total (All view) / Amount (Daily view) */}
-                                            <div className="hidden sm:flex col-span-2 justify-center">
+                                            <div className="hidden sm:flex col-span-1 justify-center">
                                                 <span className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>
                                                     ฿{(selectedEventId === 'all' ? (bill.totalOwed || 0) : bill.amount).toFixed(0)}
                                                 </span>

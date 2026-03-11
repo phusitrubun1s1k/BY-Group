@@ -16,7 +16,7 @@ export default function LiveBoardPage() {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
     const [eventPlayers, setEventPlayers] = useState<EventPlayer[]>([]);
-    const [myBill, setMyBill] = useState<{ amount: number; originalAmount: number; discount: number; totalGames: number; totalShuttlecocks: number } | null>(null);
+    const [myBill, setMyBill] = useState<{ amount: number; originalAmount: number; discount: number; additionalCost: number; totalGames: number; totalShuttlecocks: number } | null>(null);
 
     const fetchMatches = async (eventId: string, userId: string | undefined, currentFee: number, currentShuttlecockPrice: number) => {
         const supabase = createClient();
@@ -38,23 +38,27 @@ export default function LiveBoardPage() {
                     );
 
                     const totalGames = myFinishedMatches.length;
+                    let totalShuttleCost = 0;
                     let totalShuttles = 0;
 
                     myFinishedMatches.forEach(m => {
-                        if (m.shuttlecock_numbers) {
+                        if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
                             totalShuttles += m.shuttlecock_numbers.length;
+                            totalShuttleCost += m.shuttlecock_numbers.length * currentShuttlecockPrice;
                         }
                     });
 
                     const myEp = (playersRes.data as EventPlayer[]).find(ep => ep.user_id === userId);
                     const myDiscount = myEp?.discount || 0;
-                    const originalAmount = currentFee + (currentShuttlecockPrice * totalShuttles);
+                    const myAdditionalCost = myEp?.additional_cost || 0;
+                    const originalAmount = currentFee + totalShuttleCost + myAdditionalCost;
                     const amount = Math.max(0, originalAmount - myDiscount);
 
                     setMyBill({
                         amount,
                         originalAmount,
                         discount: myDiscount,
+                        additionalCost: myAdditionalCost,
                         totalGames,
                         totalShuttlecocks: totalShuttles
                     });
@@ -392,6 +396,15 @@ export default function LiveBoardPage() {
                                     <span className="font-bold text-gray-500">ค่าลูกแบด <span className="text-xs font-bold text-gray-400">({myBill.totalShuttlecocks} ลูก)</span></span>
                                     <span className="font-black text-blue-600">+ ฿{(event.shuttlecock_price * myBill.totalShuttlecocks).toLocaleString()}</span>
                                 </div>
+                                {myBill.additionalCost > 0 && (
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="font-bold text-red-500 flex items-center gap-1">
+                                            <Icon icon="solar:add-circle-bold" width={14} />
+                                            ค่าใช้จ่ายเพิ่มเติม
+                                        </span>
+                                        <span className="font-black text-red-500">+ ฿{myBill.additionalCost.toLocaleString()}</span>
+                                    </div>
+                                )}
                                 {myBill.discount > 0 && (
                                     <div className="flex items-center justify-between text-sm">
                                         <span className="font-bold text-purple-500 flex items-center gap-1">

@@ -116,13 +116,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
             myMatches.forEach(m => {
                 if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                    const matchCost = m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
-                    const matchPlayerCount = m.match_players?.length || 4;
-                    totalShuttleCost += matchCost / matchPlayerCount;
+                    totalShuttleCost += m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
                 }
             });
 
-            const amount = Math.ceil((event.entry_fee || 0) + totalShuttleCost) + (p.additional_cost || 0) - (p.discount || 0);
+            const amount = (event.entry_fee || 0) + totalShuttleCost + (p.additional_cost || 0) - (p.discount || 0);
             bills[p.user_id] = Math.max(0, amount);
         });
         return bills;
@@ -1504,12 +1502,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         m.match_players?.some(mp => mp.user_id === ep.user_id)
                                                     ).forEach(m => {
                                                         if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                                                            const matchCost = m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
-                                                            const matchPlayerCount = m.match_players?.length || 4;
-                                                            totalShuttleCost += matchCost / matchPlayerCount;
+                                                            totalShuttleCost += m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
                                                         }
                                                     });
-                                                    return Math.ceil((event.entry_fee || 0) + totalShuttleCost) + (ep.additional_cost || 0);
+                                                    return (event.entry_fee || 0) + totalShuttleCost + (ep.additional_cost || 0);
                                                 })();
                                                 const hasDiscount = (ep.discount || 0) > 0;
                                                 return (

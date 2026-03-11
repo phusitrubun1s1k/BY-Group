@@ -47,14 +47,12 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
 
             myMatches.forEach(m => {
                 if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                    const matchShuttlesCost = m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
-                    // shuttlecocks are already priced per-person so no division
-                    totalShuttleCost += matchShuttlesCost;
+                    totalShuttleCost += m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
                 }
             });
 
-            const amount = (event.entry_fee || 0) + totalShuttleCost;
-            bills[p.user_id] = amount;
+            const amount = (event.entry_fee || 0) + totalShuttleCost + (p.additional_cost || 0) - (p.discount || 0);
+            bills[p.user_id] = Math.max(0, amount);
         });
         return bills;
     }, [eventPlayers, matches, event]);

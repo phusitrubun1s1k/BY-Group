@@ -56,14 +56,15 @@ export default async function DashboardPage() {
                 if (summary) {
                     todayBillAmount = summary.total_cost || summary.total_amount || summary.amount || summary.cost || 0;
                 } else {
-                    const { data: todayMatches } = await supabase.from('match_players').select('*, matches!inner(*)').eq('user_id', user!.id).eq('matches.event_id', todayEvent.id).eq('matches.status', 'finished');
+                    const { data: todayMatches } = await supabase.from('match_players').select('*, matches!inner(*)').eq('user_id', user!.id).eq('matches.event_id', todayEvent.id).in('matches.status', ['finished', 'playing']);
                     let totalShuttles = 0;
                     todayMatches?.forEach((mp: any) => {
                         if (mp.matches && mp.matches.shuttlecock_numbers) {
                             totalShuttles += mp.matches.shuttlecock_numbers.length;
                         }
                     });
-                    todayBillAmount = todayEvent.entry_fee + (todayEvent.shuttlecock_price * totalShuttles);
+                    todayBillAmount = todayEvent.entry_fee + (todayEvent.shuttlecock_price * totalShuttles) + (myPlayer.additional_cost || 0) - (myPlayer.discount || 0);
+                    todayBillAmount = Math.max(0, todayBillAmount);
                 }
             } catch (e) {
                 console.error('Error fetching billing info:', e);
