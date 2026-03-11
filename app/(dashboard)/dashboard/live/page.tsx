@@ -211,9 +211,9 @@ export default function LiveBoardPage() {
                                     textShadow: isMe ? '0 0 1px rgba(249,115,22,0.3)' : 'none',
                                 }}>
                                     {truncateName((mp.profiles as unknown as Profile)?.display_name, 16)}
-                                    {stats?.matchNums.length > 0 && (
+                                    {match.match_number && (
                                         <span className="text-[10px] font-bold text-orange-500 ml-1 opacity-70">
-                                            (#{stats.matchNums.join(', #')})
+                                            (#{match.match_number})
                                         </span>
                                     )}
                                     {isMe && ' (คุณ)'}
@@ -247,9 +247,9 @@ export default function LiveBoardPage() {
                                     textShadow: isMe ? '0 0 1px rgba(59,130,246,0.3)' : 'none',
                                 }}>
                                     {truncateName((mp.profiles as unknown as Profile)?.display_name, 16)}
-                                    {stats?.matchNums.length > 0 && (
+                                    {match.match_number && (
                                         <span className="text-[10px] font-bold text-blue-500 ml-1 opacity-70">
-                                            (#{stats.matchNums.join(', #')})
+                                            (#{match.match_number})
                                         </span>
                                     )}
                                     {isMe && ' (คุณ)'}
