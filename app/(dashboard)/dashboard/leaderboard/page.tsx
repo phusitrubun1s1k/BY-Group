@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/src/lib/supabase/client';
 import { Icon } from '@iconify/react';
 import Link from 'next/link';
@@ -40,12 +40,17 @@ const skillColors: Record<string, string> = {
 export default function LeaderboardPage() {
     const [data, setData] = useState<LeaderboardEntry[]>([]);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [myPersonalData, setMyPersonalData] = useState<LeaderboardEntry | null>(null);
     const [loading, setLoading] = useState(true);
     const [activeFilter, setActiveFilter] = useState<FilterKey>('mmr' as any);
     const [selectedMonth, setSelectedMonth] = useState<string>('all'); // 'all' or 'YYYY-MM'
     const [availableMonths, setAvailableMonths] = useState<string[]>([]);
     const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
     const [showRankLegend, setShowRankLegend] = useState(false);
+    const [resetAt, setResetAt] = useState<string | null>(null);
+    const [resetLabel, setResetLabel] = useState('');
+    const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+    const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         loadInitialData();
@@ -59,11 +64,41 @@ export default function LeaderboardPage() {
         const supabase = createClient();
         const { data: events } = await supabase.from('events').select('event_date').order('event_date', { ascending: true });
         if (events) {
-            // Sort ascending to determine Season 1, 2, 3...
             const months = Array.from(new Set(events.map(e => e.event_date.substring(0, 7))));
             setAvailableMonths(months);
         }
+        // Fetch pending rank reset schedule
+        const { data: resetData } = await supabase
+            .from('rank_reset_schedule')
+            .select('reset_at, season_label')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+        if (resetData) {
+            setResetAt(resetData.reset_at);
+            setResetLabel(resetData.season_label);
+        }
     };
+
+    // Countdown timer effect
+    useEffect(() => {
+        if (!resetAt) return;
+        const tick = () => {
+            const now = new Date().getTime();
+            const target = new Date(resetAt).getTime();
+            const diff = Math.max(0, target - now);
+            setCountdown({
+                days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+                hours: Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+                minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
+                seconds: Math.floor((diff % (1000 * 60)) / 1000),
+            });
+        };
+        tick();
+        intervalRef.current = setInterval(tick, 1000);
+        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    }, [resetAt]);
 
     const loadRankings = async () => {
         setLoading(true);
@@ -109,6 +144,34 @@ export default function LeaderboardPage() {
             }));
 
         setData(dataWithAchievements as LeaderboardEntry[]);
+
+        // Ensure we always have myPersonalData even if filtered out
+        if (user) {
+            let me = (rows || []).find(r => r.user_id === user.id);
+            if (!me) {
+                const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+                if (profile) {
+                    me = {
+                        user_id: profile.id,
+                        display_name: profile.display_name,
+                        skill_level: profile.skill_level || 'N/A',
+                        mmr: profile.mmr || 1000,
+                        total_games: 0,
+                        total_wins: 0,
+                        total_losses: 0,
+                        total_points: 0,
+                        total_spent: 0
+                    };
+                }
+            }
+            if (me) {
+                setMyPersonalData({
+                    ...me,
+                    achievements: achievementsMap[me.user_id] || []
+                });
+            }
+        }
+
         setLoading(false);
     };
 
@@ -121,10 +184,8 @@ export default function LeaderboardPage() {
     // My rank
     const myRank = sorted.findIndex((p) => p.user_id === currentUserId) + 1;
     const myData = sorted.find((p) => p.user_id === currentUserId);
-    // If I'm not in top 20, find me in full sorted data
     const fullSorted = [...data].sort((a, b) => (b[activeFilter] as number) - (a[activeFilter] as number));
     const myFullRank = fullSorted.findIndex((p) => p.user_id === currentUserId) + 1;
-    const myFullData = fullSorted.find((p) => p.user_id === currentUserId);
 
     const top3 = sorted.slice(0, 3);
     const rest = sorted.slice(3);
@@ -148,26 +209,90 @@ export default function LeaderboardPage() {
             <div className="animate-in pb-12">
                 {/* Header + Tabs */}
                 <div className="mb-8">
-                    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2" style={{ color: 'var(--gray-900)' }}>
-                        🏆 เลเวลบอร์ดจัดอันดับ
-                    </h1>
-                    <p className="text-sm font-medium mb-6" style={{ color: 'var(--gray-500)' }}>
-                        ลานประลองฝีมือของคนในก๊วนเราทั้งหมด
-                    </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                        <div>
+                            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2" style={{ color: 'var(--gray-900)' }}>
+                                🏆 เลเวลบอร์ดจัดอันดับ
+                            </h1>
+                            <p className="text-sm font-medium" style={{ color: 'var(--gray-500)' }}>
+                                ลานประลองฝีมือของคนในก๊วนเราทั้งหมด
+                            </p>
+                        </div>
+                        <button
+                            onClick={() => setShowRankLegend(true)}
+                            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 text-xs font-bold uppercase tracking-wider transition-all shadow-sm"
+                        >
+                            <Icon icon="solar:info-circle-bold-duotone" width={18} />
+                            เกณฑ์ระดับ Rank ทั้งหมด
+                        </button>
+                    </div>
+
+                    {/* Premium Rank Reset Countdown */}
+                    {resetAt && (
+                        <div className="mb-8 relative rounded-[32px] overflow-hidden bg-gray-900 border border-gray-800 shadow-2xl group">
+                            {/* Glowing background effects */}
+                            <div className="absolute -top-24 -left-24 w-48 h-48 bg-orange-500 rounded-full mix-blend-screen filter blur-[80px] opacity-40 group-hover:opacity-60 transition-opacity duration-700" />
+                            <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-rose-500 rounded-full mix-blend-screen filter blur-[80px] opacity-30 group-hover:opacity-50 transition-opacity duration-700" />
+                            
+                            {/* Subtle grid pattern */}
+                            <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle at center, white 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+
+                            <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between p-6 sm:p-8 gap-6 backdrop-blur-sm">
+                                <div className="flex flex-col sm:flex-row items-center gap-5 text-center sm:text-left">
+                                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0 relative overflow-hidden">
+                                        <div className="absolute inset-0 bg-white/20 mix-blend-overlay" />
+                                        <Icon icon="solar:history-bold-duotone" width={32} className="text-white drop-shadow-md" />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center justify-center sm:justify-start gap-2 mb-1.5">
+                                            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Scheduled Reset</span>
+                                        </div>
+                                        <h2 className="text-xl sm:text-2xl font-black text-white leading-tight">ฤดูกาลใหม่กำลังเริ่ม</h2>
+                                        <p className="text-sm font-semibold text-gray-400 mt-1">ซีซันถัดไป: <span className="text-orange-400">{resetLabel}</span></p>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex items-center gap-1.5 sm:gap-2.5 bg-black/40 p-2 sm:p-3 rounded-2xl border border-white/5 ring-1 ring-white/10">
+                                    {[
+                                        { val: countdown.days, label: 'วัน' },
+                                        { val: countdown.hours, label: 'ชม.' },
+                                        { val: countdown.minutes, label: 'นาที' },
+                                        { val: countdown.seconds, label: 'วินาที' },
+                                    ].map((item, i, arr) => (
+                                        <div key={i} className="flex items-center">
+                                            <div className="flex flex-col items-center justify-center w-[52px] h-[56px] sm:w-[64px] sm:h-[68px] rounded-xl bg-gray-800/80 border border-gray-700 shadow-inner relative overflow-hidden">
+                                                <div className="absolute top-0 inset-x-0 h-1/2 bg-white/5 border-b border-white/5" />
+                                                <div className="text-xl sm:text-2xl font-black text-white tabular-nums tracking-tighter drop-shadow-md relative z-10">
+                                                    {String(item.val).padStart(2, '0')}
+                                                </div>
+                                                <div className="text-[8px] sm:text-[9px] font-bold text-gray-400 uppercase tracking-wider relative z-10 mt-0.5">
+                                                    {item.label}
+                                                </div>
+                                            </div>
+                                            {i < arr.length - 1 && (
+                                                <div className="mx-0.5 sm:mx-1 text-gray-600 font-black animate-pulse">:</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Personal Rank Progress */}
-                    {myFullData && (
+                    {myPersonalData && (
                         <div className="mb-8 p-6 rounded-[32px] bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-xl relative overflow-hidden ring-1 ring-white/10">
                             <div className="absolute top-0 right-0 w-48 h-48 bg-white/5 rounded-bl-full pointer-events-none" />
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 relative z-10">
                                 <div className="flex items-center gap-4">
-                                    <div className="w-14 h-14 rounded-2xl bg-orange-500/10 flex items-center justify-center text-2xl font-black shadow-lg border border-orange-500/20 text-orange-500">
-                                        {myFullData.display_name.charAt(0).toUpperCase()}
+                                    <div className="w-14 h-14 rounded-2xl bg-orange-500/10 flex items-center justify-center text-2xl font-black shadow-lg border border-orange-500/20 text-orange-500 shrink-0">
+                                        {myPersonalData.display_name.charAt(0).toUpperCase()}
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-black leading-none mb-1.5">{myFullData.display_name}</h2>
+                                        <h2 className="text-lg font-black leading-none mb-1.5">{myPersonalData.display_name}</h2>
                                         <div className="flex items-center gap-2">
-                                            <RankBadge mmr={myFullData.mmr || 1000} size="sm" showName={true} className="bg-white/10 border-white/10 text-white" />
+                                            <RankBadge mmr={myPersonalData.mmr || 1000} size="sm" showName={true} className="bg-white/10 border-white/10 text-white" />
                                             <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
                                                 อันดับของคุณ: {myFullRank > 0 ? `#${myFullRank}` : '-'}
                                             </span>
@@ -175,19 +300,21 @@ export default function LeaderboardPage() {
                                     </div>
                                 </div>
 
-                                <div className="flex-1 max-w-sm">
+                                <div className="flex-1 max-w-sm w-full">
                                     <div className="flex justify-between items-end mb-2">
                                         <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">{currentFilter.label} ของคุณ</span>
-                                        <span className="text-sm font-black text-orange-400">{getStatValue(myFullData)} <span className="text-[10px] font-bold text-white/40">{currentFilter.unit}</span></span>
+                                        <span className="text-sm font-black text-orange-400">{getStatValue(myPersonalData)} <span className="text-[10px] font-bold text-white/40">{currentFilter.unit}</span></span>
                                     </div>
                                     {(() => {
-                                        const { rank: nextRank, pointsNeeded, progress } = getNextRank(myFullData.mmr || 1000);
+                                        const { rank: nextRank, pointsNeeded, progress } = getNextRank(myPersonalData.mmr || 1000);
                                         return (
                                             <div className="space-y-2">
                                                 <div className="flex justify-between items-end">
                                                     <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Rank Progression</span>
-                                                    {nextRank && (
+                                                    {nextRank ? (
                                                         <span className="text-[10px] font-bold text-white/60">อีก {pointsNeeded} แต้มจะถึง {nextRank.name}</span>
+                                                    ) : (
+                                                        <span className="text-[10px] font-bold text-orange-400">MAX RANK</span>
                                                     )}
                                                 </div>
                                                 <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden p-[2px]">
@@ -201,12 +328,6 @@ export default function LeaderboardPage() {
                                     })()}
                                 </div>
 
-                                <button
-                                    onClick={() => setShowRankLegend(true)}
-                                    className="px-4 py-2 rounded-xl bg-white/10 border border-white/10 hover:bg-white/20 text-[10px] font-black uppercase tracking-widest transition-all"
-                                >
-                                    ดูระดับทั้งหมด
-                                </button>
                             </div>
                         </div>
                     )}
@@ -412,7 +533,7 @@ export default function LeaderboardPage() {
                                                 <p className="text-[10px] opacity-70 uppercase tracking-widest font-bold">MIN MMR: {rt.minMMR}</p>
                                             </div>
                                         </div>
-                                        {myFullData && myFullData.mmr >= rt.minMMR && (
+                                        {myPersonalData && myPersonalData.mmr >= rt.minMMR && (
                                             <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-green-500/10 text-green-600">
                                                 <Icon icon="solar:check-circle-bold" width={16} />
                                                 <span className="text-[9px] font-black uppercase">Unlocked</span>

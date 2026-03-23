@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { useConfirm } from './ConfirmProvider';
+import NotificationBell from './NotificationBell';
 import type { Profile } from '@/src/types';
 import { Icon } from '@iconify/react';
 
@@ -26,6 +27,7 @@ const adminMenuItems = [
     { href: '/dashboard/admin/matches', label: 'จัดแมตช์', icon: 'solar:sort-horizontal-linear' },
     { href: '/dashboard/admin/billing', label: 'จัดการเงิน', icon: 'solar:wallet-linear' },
     { href: '/dashboard/admin/users', label: 'จัดการสมาชิก', icon: 'solar:users-group-rounded-linear' },
+    { href: '/dashboard/admin/rank-reset', label: 'รีแรงค์', icon: 'solar:restart-linear' },
     { href: '/dashboard/history', label: 'ประวัติก๊วน', icon: 'solar:clock-circle-linear' },
 ];
 
@@ -115,21 +117,24 @@ export default function Navbar({ profile }: NavbarProps) {
 
                 {/* User Info + Logout */}
                 <div className="px-6 py-6 border-t bg-gray-50/50" style={{ borderColor: 'var(--gray-200)' }}>
-                    <div className="flex items-center gap-3 mb-4">
-                        <div
-                            className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shadow-sm"
-                            style={{ background: 'var(--gray-900)', color: 'var(--white)' }}
-                        >
-                            {profile.display_name.charAt(0).toUpperCase()}
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <div
+                                className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shadow-sm shrink-0"
+                                style={{ background: 'var(--gray-900)', color: 'var(--white)' }}
+                            >
+                                {profile.display_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold truncate" style={{ color: 'var(--gray-900)' }}>
+                                    {profile.display_name}
+                                </p>
+                                <p className="text-xs font-medium" style={{ color: 'var(--gray-500)' }}>
+                                    {isAdmin ? 'ผู้จัดก๊วน' : 'ผู้เล่น'}
+                                </p>
+                            </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold truncate" style={{ color: 'var(--gray-900)' }}>
-                                {profile.display_name}
-                            </p>
-                            <p className="text-xs font-medium" style={{ color: 'var(--gray-500)' }}>
-                                {isAdmin ? 'ผู้จัดก๊วน' : 'ผู้เล่น'}
-                            </p>
-                        </div>
+                        <NotificationBell userId={profile.id} />
                     </div>
                     <button
                         onClick={handleLogout}
@@ -155,13 +160,16 @@ export default function Navbar({ profile }: NavbarProps) {
                         Badminton<span style={{ color: 'var(--orange-500)' }}>Group</span>
                     </span>
                 </div>
-                <button
-                    onClick={() => setMobileOpen(!mobileOpen)}
-                    className="w-10 h-10 flex items-center justify-center rounded-xl transition-colors bg-gray-50 border border-gray-100"
-                    style={{ color: 'var(--gray-700)' }}
-                >
-                    <Icon icon={mobileOpen ? 'solar:close-circle-linear' : 'solar:hamburger-menu-linear'} width={24} />
-                </button>
+                <div className="flex items-center gap-2">
+                    <NotificationBell userId={profile.id} />
+                    <button
+                        onClick={() => setMobileOpen(!mobileOpen)}
+                        className="w-10 h-10 flex items-center justify-center rounded-xl transition-colors bg-gray-50 border border-gray-100"
+                        style={{ color: 'var(--gray-700)' }}
+                    >
+                        <Icon icon={mobileOpen ? 'solar:close-circle-linear' : 'solar:hamburger-menu-linear'} width={24} />
+                    </button>
+                </div>
             </header>
 
             {/* Mobile Drawer */}

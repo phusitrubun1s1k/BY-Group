@@ -152,42 +152,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         });
         return active;
     }, [matches]);
-    // Cleanup guest profiles from PREVIOUS events (preserve billing data)
     const cleanupOldGuests = useCallback(async (currentEventId: string) => {
-        const supabase = createClient();
-
-        // 1. Find all guest profiles
-        const { data: allGuests, error: fetchErr } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('is_guest', true);
-
-        if (fetchErr || !allGuests || allGuests.length === 0) return;
-
-        // 2. Find which guests are in the CURRENT event
-        const { data: currentEventPlayers } = await supabase
-            .from('event_players')
-            .select('user_id')
-            .eq('event_id', currentEventId);
-
-        const currentEventUserIds = new Set((currentEventPlayers || []).map(ep => ep.user_id));
-
-        // 3. Filter to only guests NOT in the current event
-        const oldGuestIds = allGuests
-            .filter(g => !currentEventUserIds.has(g.id))
-            .map(g => g.id);
-
-        if (oldGuestIds.length === 0) return;
-
-        // 4. Delete ONLY profiles (keep event_players & match_players for billing history)
-        const { error: delErr } = await supabase
-            .from('profiles')
-            .delete()
-            .in('id', oldGuestIds);
-
-        if (!delErr) {
-            console.log(`[Cleanup] ลบขาจรจากก๊วนเก่า ${oldGuestIds.length} คน (เก็บบิลไว้)`);
-        }
+        // [REMOVED]
+        // This function previously deleted guest profiles not in the current event.
+        // However, because event_players and match_players have ON DELETE CASCADE
+        // to profiles(id), deleting the profile was permanently wiping out
+        // the guests from historical matches and billing records!
+        // Guest profiles will now be retained indefinitely.
+        return;
     }, []);
 
     useEffect(() => {
@@ -1190,6 +1162,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                             <div className="min-w-0 pr-2">
                                                                                 <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
                                                                                     {truncateName(prof?.display_name, 20)}
+                                                                                    {prof?.is_guest && <span className="text-[10px] font-bold text-orange-500 ml-1 bg-orange-50 px-1 py-0.5 rounded">ขาจร</span>}
                                                                                 </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                                                     <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
@@ -1297,7 +1270,6 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         </button>
                                                     )}
                                                 </div>
-                                                {event?.status === 'open' && (
                                                     <div className="flex gap-1.5">
                                                         {match.status === 'finished' && (
                                                             <>
@@ -1332,7 +1304,6 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </>
                                                         )}
                                                     </div>
-                                                )}
                                             </div>
                                             <div className="flex items-center gap-3">
                                                 <div className="flex-1 p-3 rounded-xl min-w-0" style={{
@@ -1354,7 +1325,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} (#{match.match_number || i + 1})
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
+                                                                        {(mp.profiles as unknown as Profile)?.is_guest && <span className="text-[10px] font-bold text-orange-500 mx-1 bg-orange-50 px-1 py-0.5 rounded">ขาจร</span>}
+                                                                        (#{match.match_number || i + 1})
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1366,6 +1339,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </div>
                                                         );
                                                     })}
+                                                    {Array.from({ length: Math.max(0, 2 - tA.length) }).map((_, idx) => (
+                                                        <div key={`empty-A-${idx}`} className="py-2 border-b border-orange-100 last:border-0 min-w-0 flex items-center">
+                                                            <p className="text-sm font-bold truncate italic text-gray-400 opacity-70">
+                                                                (ผู้เล่นขาจร)
+                                                            </p>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                                 <div className="shrink-0 text-center px-1.5 py-0.5 rounded-full bg-slate-50 border border-slate-100">
                                                     {match.status === 'finished' ? (
@@ -1398,7 +1378,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <p className="text-sm font-bold truncate" style={{
                                                                         color: isMe ? '#2563eb' : 'var(--gray-900)',
                                                                     }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'} (#{match.match_number || i + 1})
+                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
+                                                                        {(mp.profiles as unknown as Profile)?.is_guest && <span className="text-[10px] font-bold text-blue-500 mx-1 bg-blue-50 px-1 py-0.5 rounded">ขาจร</span>}
+                                                                        (#{match.match_number || i + 1})
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1410,6 +1392,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </div>
                                                         );
                                                     })}
+                                                    {Array.from({ length: Math.max(0, 2 - tB.length) }).map((_, idx) => (
+                                                        <div key={`empty-B-${idx}`} className="py-2 border-b border-blue-100 last:border-0 min-w-0 flex items-center">
+                                                            <p className="text-sm font-bold truncate italic text-gray-400 opacity-70">
+                                                                (ผู้เล่นขาจร)
+                                                            </p>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             </div>
                                         </div>

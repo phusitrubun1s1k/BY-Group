@@ -165,11 +165,11 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                         <span className="text-[10px] font-black p-1 rounded bg-gray-100 text-gray-500">คอร์ท {match.court_number}</span>
                         <div className="flex items-center gap-1 min-w-0 truncate">
                             <span className={`text-[11px] font-bold truncate ${aWon ? 'text-orange-600' : 'text-gray-600'}`}>
-                                {tA.map(mp => truncateName((mp.profiles as unknown as Profile).display_name, 12)).join(' + ')}
+                                {tA.map(mp => truncateName((mp.profiles as unknown as Profile)?.display_name || 'ไม่ทราบชื่อ', 12)).join(' + ')}
                             </span>
                             <span className="text-[9px] font-bold text-gray-300 italic">vs</span>
                             <span className={`text-[11px] font-bold truncate ${bWon ? 'text-blue-600' : 'text-gray-600'}`}>
-                                {tB.map(mp => truncateName((mp.profiles as unknown as Profile).display_name, 12)).join(' + ')}
+                                {tB.map(mp => truncateName((mp.profiles as unknown as Profile)?.display_name || 'ไม่ทราบชื่อ', 12)).join(' + ')}
                             </span>
                         </div>
                     </div>
@@ -218,13 +218,18 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                             const prof = mp.profiles as unknown as Profile;
                             return (
                                 <div key={idx} className="flex flex-col">
-                                    <span className={`text-xs font-black truncate ${aWon ? 'text-orange-900' : 'text-gray-900'}`}>{truncateName(prof.display_name, 14)}</span>
-                                    {prof.skill_level && (
+                                    <span className={`text-xs font-black truncate ${aWon ? 'text-orange-900' : 'text-gray-900'}`}>{truncateName(prof?.display_name || 'ไม่ทราบชื่อ', 14)}</span>
+                                    {prof?.skill_level && (
                                         <span className={`text-[9px] font-bold ${aWon ? 'text-orange-500' : 'text-gray-400'}`}>{prof.skill_level}</span>
                                     )}
                                 </div>
                             );
                         })}
+                        {Array.from({ length: Math.max(0, 2 - tA.length) }).map((_, idx) => (
+                            <div key={`empty-A-${idx}`} className="flex flex-col">
+                                <span className="text-xs font-black truncate text-gray-400 italic opacity-50">(ผู้เล่นขาจร)</span>
+                            </div>
+                        ))}
                     </div>
 
                     {/* Result / VS */}
@@ -242,13 +247,18 @@ function MatchCard({ match, index, statusCfg, simplified = false }: { match: Mat
                             const prof = mp.profiles as unknown as Profile;
                             return (
                                 <div key={idx} className="flex flex-col items-end">
-                                    <span className={`text-xs font-black truncate ${bWon ? 'text-blue-900' : 'text-gray-900'}`}>{truncateName(prof.display_name, 14)}</span>
-                                    {prof.skill_level && (
+                                    <span className={`text-xs font-black truncate ${bWon ? 'text-blue-900' : 'text-gray-900'}`}>{truncateName(prof?.display_name || 'ไม่ทราบชื่อ', 14)}</span>
+                                    {prof?.skill_level && (
                                         <span className={`text-[10px] font-bold ${bWon ? 'text-blue-500' : 'text-gray-400'}`}>{prof.skill_level}</span>
                                     )}
                                 </div>
                             );
                         })}
+                        {Array.from({ length: Math.max(0, 2 - tB.length) }).map((_, idx) => (
+                            <div key={`empty-B-${idx}`} className="flex flex-col items-end">
+                                <span className="text-xs font-black truncate text-gray-400 italic opacity-50">(ผู้เล่นขาจร)</span>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </div>

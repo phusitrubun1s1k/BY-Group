@@ -10,7 +10,7 @@ import imageCompression from 'browser-image-compression';
 import QRCode from 'react-qr-code';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import RankBadge from '@/src/components/RankBadge';
-import { getNextRank } from '@/src/lib/rank-utils';
+import { getNextRank, getRankFromMMR } from '@/src/lib/rank-utils';
 import { fetchPlayerStats, calculateAchievementProgress, AchievementProgress } from '@/src/lib/utils/achievement-utils';
 
 const SKILL_OPTIONS: SelectOption[] = [
@@ -109,6 +109,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
     const [billingHistory, setBillingHistory] = useState<BillingHistory[]>([]);
     const [achievements, setAchievements] = useState<AchievementProgress[]>([]);
     const [mmrHistory, setMmrHistory] = useState<MMRHistory[]>([]);
+    const [seasonHistory, setSeasonHistory] = useState<{ id: string; season_label: string; final_mmr: number; final_rank_name: string; total_games: number; total_wins: number; created_at: string }[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [showQR, setShowQR] = useState(false);
@@ -158,6 +159,14 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
         if (mmrData) {
             setMmrHistory(mmrData as MMRHistory[]);
         }
+
+        // Fetch season history
+        const { data: seasonData } = await supabase
+            .from('season_history')
+            .select('*')
+            .eq('user_id', targetUserId)
+            .order('created_at', { ascending: false });
+        if (seasonData) setSeasonHistory(seasonData);
 
         // Only fetch billing for own profile
         if (currentUser?.id === targetUserId) {
@@ -407,6 +416,39 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                     </div>
                 </div>
             </div>
+
+            {/* Season History */}
+            {seasonHistory.length > 0 && (
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2 px-1"><Icon icon="solar:medal-ribbons-star-bold" width={18} className="text-amber-500" /><h2 className="text-sm font-black uppercase text-gray-400">ประวัติซีซัน</h2></div>
+                    <div className="card border-none shadow-md overflow-hidden" style={{ padding: 0 }}>
+                        <div className="divide-y divide-gray-50">
+                            {seasonHistory.map((s) => {
+                                const rank = getRankFromMMR(s.final_mmr);
+                                return (
+                                    <div key={s.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${rank.bg} ${rank.text}`}>
+                                                <Icon icon={rank.icon} width={20} style={{ color: rank.color }} />
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-black text-gray-900">{s.season_label}</p>
+                                                <p className="text-[10px] font-bold text-gray-400">
+                                                    {s.total_games} เกม · {s.total_wins} ชนะ · {new Date(s.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-sm font-black text-gray-900">{s.final_mmr}</p>
+                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: rank.color }}>{s.final_rank_name}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {isOwnProfile && billingHistory.length > 0 && (
                 <div className="space-y-4">

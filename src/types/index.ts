@@ -92,3 +92,14 @@ export interface MMRHistory {
     reason?: string;
     created_at: string;
 }
+
+export interface Notification {
+    id: string;
+    user_id: string;
+    title: string;
+    body: string;
+    type: 'match_start' | 'payment_reminder' | 'achievement' | 'system';
+    is_read: boolean;
+    link_url?: string;
+    created_at: string;
+}

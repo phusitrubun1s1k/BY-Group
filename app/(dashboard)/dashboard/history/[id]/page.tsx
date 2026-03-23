@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useEffect as useMount } from 'react';
+import { createPortal } from 'react-dom';
 import { createClient } from '@/src/lib/supabase/client';
 import type { Event, Match, MatchPlayer, EventPlayer } from '@/src/types';
 import Link from 'next/link';
@@ -15,6 +16,19 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
     const [loading, setLoading] = useState(true);
     const [updatingPayment, setUpdatingPayment] = useState<string | null>(null);
     const [showPaymentSection, setShowPaymentSection] = useState(true);
+    const [scoreMatch, setScoreMatch] = useState<Match | null>(null);
+    const [winner, setWinner] = useState<'A' | 'B' | 'Draw' | 'None' | null>(null);
+    const [mounted, setMounted] = useState(false);
+    
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    // Reset winner when score modal opens/closes
+    useEffect(() => {
+        if (scoreMatch) setWinner(null);
+    }, [scoreMatch]);
+
     const confirm = useConfirm();
 
     useEffect(() => {
@@ -71,6 +85,7 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
     if (!event) return <div className="text-center py-20"><p style={{ color: 'var(--gray-500)' }}>ไม่พบข้อมูลก๊วน</p></div>;
 
     const finishedMatches = matches.filter(m => m.status === 'finished');
+    const unfinishedMatches = matches.filter(m => m.status === 'playing' || m.status === 'waiting');
     const totalShuttlecocks = finishedMatches.reduce((sum: number, m: Match) => sum + (m.shuttlecock_numbers?.length || 0), 0);
 
 
@@ -104,6 +119,35 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
             loadData(event.id);
         }
         setUpdatingPayment(null);
+    };
+
+    const submitScore = async () => {
+        if (!scoreMatch) return;
+        if (!winner) { toast.error('กรุณาเลือกผลการแข่งขัน'); return; }
+
+        const isDraw = winner === 'Draw';
+        const isNone = winner === 'None';
+        const totalA = isNone ? 0 : (isDraw ? 1 : (winner === 'A' ? 1 : 0));
+        const totalB = isNone ? 0 : (isDraw ? 1 : (winner === 'B' ? 1 : 0));
+
+        const ok = await confirm({
+            title: 'บันทึกคะแนน?',
+            message: isNone ? 'ยืนยันการจบแมตช์โดยไม่แจ้งผลการแข่งขัน?' : (isDraw ? 'ยืนยันผลการแข่งขัน เสมอ?' : `ยืนยันผลการแข่งขัน ทีม ${winner} ชนะ?`),
+            type: isNone ? 'warning' : 'info',
+            confirmText: 'บันทึกคะแนน'
+        });
+        if (!ok) return;
+
+        const supabase = createClient();
+        await supabase.from('matches').update({
+            status: 'finished',
+            team_a_score: totalA,
+            team_b_score: totalB,
+        }).eq('id', scoreMatch.id);
+
+        toast.success(isNone ? 'บันทึกสำเร็จ! (ไม่แจ้งผลแข่ง)' : (isDraw ? 'บันทึกสำเร็จ! เสมอ 🤝' : `บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`));
+        setScoreMatch(null);
+        loadData(event.id);
     };
 
     return (
@@ -183,6 +227,11 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                                 {ep.profiles?.display_name?.charAt(0).toUpperCase()}
                             </div>
                             <span className="text-xs font-bold text-gray-700">{ep.profiles?.display_name}</span>
+                            {ep.profiles?.is_guest && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#f9731620', color: '#f97316' }}>
+                                    ขาจร
+                                </span>
+                            )}
                             {ep.is_substitute && (
                                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f620', color: '#3b82f6' }}>
                                     สำรอง
@@ -298,8 +347,99 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                 )
             }
 
+            {/* Unfinished Matches */}
+            {unfinishedMatches.length > 0 && (
+                <div className="card shadow-sm mb-6 border border-orange-200" style={{ padding: '20px 24px', background: 'var(--orange-50)' }}>
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-sm font-black tracking-tight" style={{ color: 'var(--orange-600)' }}>
+                            <Icon icon="solar:clock-circle-bold-duotone" width={16} className="inline-block mr-1.5 align-text-bottom" />
+                            แมตช์ที่ยังไม่จบ ({unfinishedMatches.length})
+                        </h2>
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-600">ก๊วนจบแล้ว แต่ยังมีแมตช์ค้าง</span>
+                    </div>
+                    
+                    <div className="space-y-3">
+                        {unfinishedMatches.map((match, idx) => {
+                            const teamA = match.match_players?.filter(mp => mp.team === 'A') || [];
+                            const teamB = match.match_players?.filter(mp => mp.team === 'B') || [];
+                            
+                            return (
+                                <div key={match.id} className="rounded-xl border border-orange-200 bg-white overflow-hidden">
+                                    <div className="flex items-center justify-between px-4 py-2 bg-orange-50/50 border-b border-orange-100">
+                                        <span className="text-xs font-bold text-orange-500">สนาม {match.court_number} · สถานะ: {match.status === 'playing' ? 'กำลังตี' : 'รอคิว'}</span>
+                                        {match.shuttlecock_numbers && match.shuttlecock_numbers.length > 0 && (
+                                            <span className="text-[10px] font-bold text-orange-400">
+                                                🏸 ลูก #{match.shuttlecock_numbers.join(', #')}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="p-4">
+                                        <div className="flex items-center justify-between gap-4">
+                                            {/* Team A */}
+                                            <div className="w-[40%]">
+                                                <div className="flex items-center gap-1.5 mb-2">
+                                                    <div className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--orange-500)' }} />
+                                                    <span className="text-[10px] font-black tracking-wider uppercase text-gray-400">Team A</span>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    {teamA.map((mp, i) => (
+                                                        <div key={mp.id} className="flex items-center gap-2">
+                                                            <span className="text-xs font-bold text-gray-700 truncate">
+                                                                {mp.profiles?.display_name || 'ไม่ทราบชื่อ'}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                    {Array.from({ length: Math.max(0, 2 - teamA.length) }).map((_, i) => (
+                                                        <span key={`empty-A-${i}`} className="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full italic opacity-70">
+                                                            (ขาจร)
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* VS center and End Button */}
+                                            <div className="w-[20%] text-center flex flex-col items-center justify-center gap-2">
+                                                <span className="text-[10px] font-black text-gray-300 italic">VS</span>
+                                                <button
+                                                    onClick={() => setScoreMatch(match)}
+                                                    className="w-full py-1.5 rounded bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-bold transition-colors shadow-sm"
+                                                >
+                                                    จบแมตช์
+                                                </button>
+                                            </div>
+
+                                            {/* Team B */}
+                                            <div className="w-[40%] text-right">
+                                                <div className="flex items-center justify-end gap-1.5 mb-2">
+                                                    <span className="text-[10px] font-black tracking-wider uppercase text-gray-400">Team B</span>
+                                                    <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#3b82f6' }} />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    {teamB.map((mp, i) => (
+                                                        <div key={mp.id} className="flex items-center justify-end gap-2">
+                                                            <span className="text-xs font-bold text-gray-700 truncate">
+                                                                {mp.profiles?.display_name || 'ไม่ทราบชื่อ'}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                    {Array.from({ length: Math.max(0, 2 - teamB.length) }).map((_, i) => (
+                                                        <span key={`empty-B-${i}`} className="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full italic opacity-70">
+                                                            (ขาจร)
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
             {/* Match Results */}
-            <div className="card shadow-sm" style={{ padding: '20px 24px' }}>
+            <div className="card shadow-sm mb-16" style={{ padding: '20px 24px' }}>
                 <h2 className="text-sm font-black mb-4 tracking-tight uppercase text-gray-400">ผลการแข่งขัน</h2>
                 {finishedMatches.length === 0 ? (
                     <div className="text-center py-8">
@@ -336,6 +476,11 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                                                             {mp.profiles?.display_name}
                                                         </span>
                                                     ))}
+                                                    {Array.from({ length: Math.max(0, 2 - teamA.length) }).map((_, idx) => (
+                                                        <span key={`empty-A-${idx}`} className="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full italic opacity-70">
+                                                            (ขาจร)
+                                                        </span>
+                                                    ))}
                                                 </div>
                                                 <span className={`text-2xl font-black ${aWins ? 'text-emerald-500' : 'text-gray-400'}`}>
                                                     {match.team_a_score}
@@ -353,6 +498,11 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                                                             {mp.profiles?.display_name}
                                                         </span>
                                                     ))}
+                                                    {Array.from({ length: Math.max(0, 2 - teamB.length) }).map((_, idx) => (
+                                                        <span key={`empty-B-${idx}`} className="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full italic opacity-70">
+                                                            (ขาจร)
+                                                        </span>
+                                                    ))}
                                                 </div>
                                                 <span className={`text-2xl font-black ${!aWins ? 'text-emerald-500' : 'text-gray-400'}`}>
                                                     {match.team_b_score}
@@ -367,6 +517,118 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                     </div>
                 )}
             </div>
-        </div >
+
+            {mounted && scoreMatch && createPortal(
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" onClick={() => setScoreMatch(null)} />
+                    <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                        {/* Header */}
+                        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between" style={{ background: 'var(--white)' }}>
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm" style={{ background: 'var(--orange-50)', color: 'var(--orange-500)' }}>
+                                    <Icon icon="solar:cup-star-bold-duotone" width={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-black" style={{ color: 'var(--gray-900)' }}>บันทึกผลการแข่ง</h3>
+                                    <p className="text-xs font-medium" style={{ color: 'var(--gray-500)' }}>
+                                        สนาม {scoreMatch.court_number}
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={() => setScoreMatch(null)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors">
+                                <Icon icon="solar:close-circle-bold" width={20} />
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-6">
+                            <p className="text-[13px] font-bold text-center mb-6" style={{ color: 'var(--gray-600)' }}>
+                                กรุณาเลือกทีมที่ชนะในแมตช์นี้
+                            </p>
+                            <div className="grid grid-cols-2 gap-3 mb-3">
+                                <button
+                                    onClick={() => setWinner('A')}
+                                    className="flex flex-col items-center gap-3 p-4 rounded-2xl transition-all relative overflow-hidden group"
+                                    style={{
+                                        background: winner === 'A' ? 'var(--orange-500)' : 'var(--white)',
+                                        border: `2px solid ${winner === 'A' ? 'var(--orange-500)' : 'var(--gray-200)'}`,
+                                        color: winner === 'A' ? 'var(--white)' : 'var(--gray-900)',
+                                    }}
+                                >
+                                    <div className="absolute -right-4 -top-4 w-16 h-16 rounded-full opacity-10" style={{ background: 'var(--white)' }} />
+                                    <div className="w-12 h-12 rounded-full flex items-center justify-center shadow-sm" style={{
+                                        background: winner === 'A' ? 'rgba(255,255,255,0.2)' : 'var(--orange-50)',
+                                        color: winner === 'A' ? 'var(--white)' : 'var(--orange-500)',
+                                    }}>
+                                        <Icon icon="solar:user-hands-bold-duotone" width={28} />
+                                    </div>
+                                    <div className="text-center">
+                                        <span className="block text-[10px] font-black uppercase tracking-wider mb-0.5 opacity-80">ผู้ชนะ</span>
+                                        <span className="text-base font-black">ทีม A</span>
+                                    </div>
+                                </button>
+                                <button
+                                    onClick={() => setWinner('B')}
+                                    className="flex flex-col items-center gap-3 p-4 rounded-2xl transition-all relative overflow-hidden group"
+                                    style={{
+                                        background: winner === 'B' ? '#3b82f6' : 'var(--white)',
+                                        border: `2px solid ${winner === 'B' ? '#3b82f6' : 'var(--gray-200)'}`,
+                                        color: winner === 'B' ? 'var(--white)' : 'var(--gray-900)',
+                                    }}
+                                >
+                                    <div className="absolute -right-4 -top-4 w-16 h-16 rounded-full opacity-10" style={{ background: 'var(--white)' }} />
+                                    <div className="w-12 h-12 rounded-full flex items-center justify-center shadow-sm" style={{
+                                        background: winner === 'B' ? 'rgba(255,255,255,0.2)' : 'rgba(59,130,246,0.1)',
+                                        color: winner === 'B' ? 'var(--white)' : '#3b82f6',
+                                    }}>
+                                        <Icon icon="solar:user-hands-bold-duotone" width={28} />
+                                    </div>
+                                    <div className="text-center">
+                                        <span className="block text-[10px] font-black uppercase tracking-wider mb-0.5 opacity-80">ผู้ชนะ</span>
+                                        <span className="text-base font-black">ทีม B</span>
+                                    </div>
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 mb-6">
+                                <button
+                                    onClick={() => setWinner('Draw')}
+                                    className="p-3 rounded-xl transition-all flex items-center justify-center gap-2"
+                                    style={{
+                                        background: winner === 'Draw' ? 'var(--gray-900)' : 'var(--white)',
+                                        border: `2px solid ${winner === 'Draw' ? 'var(--gray-900)' : 'var(--gray-200)'}`,
+                                        color: winner === 'Draw' ? 'var(--white)' : 'var(--gray-700)',
+                                    }}
+                                >
+                                    <Icon icon="solar:handshake-bold-duotone" width={18} />
+                                    <span className="text-sm font-black">เสมอ</span>
+                                </button>
+                                <button
+                                    onClick={() => setWinner('None')}
+                                    className="p-3 rounded-xl transition-all flex items-center justify-center gap-2"
+                                    style={{
+                                        background: winner === 'None' ? 'var(--gray-600)' : 'var(--white)',
+                                        border: `2px solid ${winner === 'None' ? 'var(--gray-600)' : 'var(--gray-200)'}`,
+                                        color: winner === 'None' ? 'var(--white)' : 'var(--gray-700)',
+                                    }}
+                                >
+                                    <span className="text-sm font-black">ไม่ระบุผล</span>
+                                    <Icon icon="solar:question-circle-bold-duotone" width={18} />
+                                </button>
+                            </div>
+                            <div className="border-t border-gray-100 pt-6">
+                                <button
+                                    onClick={submitScore}
+                                    disabled={!winner}
+                                    className="btn btn-primary w-full shadow-lg"
+                                >
+                                    บันทึกผลการแข่งขัน
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+        </div>
     );
 }

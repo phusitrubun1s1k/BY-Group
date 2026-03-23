@@ -220,6 +220,11 @@ export default function LiveBoardPage() {
                                 </p>
                             );
                         })}
+                        {Array.from({ length: Math.max(0, 2 - tA.length) }).map((_, i) => (
+                            <p key={`empty-A-${i}`} className="text-base truncate italic opacity-50" style={{ color: 'var(--gray-400)' }}>
+                                (ผู้เล่นขาจร)
+                            </p>
+                        ))}
                     </div>
                     <div className="shrink-0 text-center">
                         {match.status === 'finished' ? (
@@ -256,6 +261,11 @@ export default function LiveBoardPage() {
                                 </p>
                             );
                         })}
+                        {Array.from({ length: Math.max(0, 2 - tB.length) }).map((_, i) => (
+                            <p key={`empty-B-${i}`} className="text-base truncate italic opacity-50" style={{ color: 'var(--gray-400)' }}>
+                                (ผู้เล่นขาจร)
+                            </p>
+                        ))}
                     </div>
                 </div>
             </div>
