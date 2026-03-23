@@ -15,6 +15,7 @@ export interface PlayerStats {
     member_status: number;
     og_member: number;
     mvp_votes: number;
+    lose_count: number;
 }
 
 export interface AchievementProgress {
@@ -169,6 +170,7 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
         member_status: profile?.is_guest ? 0 : 1,
         og_member: isOG,
         mvp_votes: 0,
+        lose_count: Math.max(0, games_count - win_count),
     };
 }
 

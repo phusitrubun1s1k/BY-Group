@@ -138,10 +138,19 @@ export default function LeaderboardPage() {
 
         const dataWithAchievements = (rows || [])
             .filter(r => r.total_games > 0)
-            .map(r => ({
-                ...r,
-                achievements: achievementsMap[r.user_id] || []
-            }));
+            .map(r => {
+                const achs = [...(achievementsMap[r.user_id] || [])];
+                const loseCount = r.total_games - r.total_wins;
+
+                if (loseCount >= 20) {
+                    achs.push({ name: 'เน้นเปิดไม่เน้นจบ', icon: 'solar:moon-stars-bold', type: 'troll' });
+                }
+
+                return {
+                    ...r,
+                    achievements: achs
+                };
+            });
 
         setData(dataWithAchievements as LeaderboardEntry[]);
 
@@ -233,7 +242,7 @@ export default function LeaderboardPage() {
                             {/* Glowing background effects */}
                             <div className="absolute -top-24 -left-24 w-48 h-48 bg-orange-500 rounded-full mix-blend-screen filter blur-[80px] opacity-40 group-hover:opacity-60 transition-opacity duration-700" />
                             <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-rose-500 rounded-full mix-blend-screen filter blur-[80px] opacity-30 group-hover:opacity-50 transition-opacity duration-700" />
-                            
+
                             {/* Subtle grid pattern */}
                             <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle at center, white 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
 
@@ -252,7 +261,7 @@ export default function LeaderboardPage() {
                                         <p className="text-sm font-semibold text-gray-400 mt-1">ซีซันถัดไป: <span className="text-orange-400">{resetLabel}</span></p>
                                     </div>
                                 </div>
-                                
+
                                 <div className="flex items-center gap-1.5 sm:gap-2.5 bg-black/40 p-2 sm:p-3 rounded-2xl border border-white/5 ring-1 ring-white/10">
                                     {[
                                         { val: countdown.days, label: 'วัน' },
@@ -473,12 +482,19 @@ export default function LeaderboardPage() {
                                                         </p>
                                                         {isMe && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-600">คุณ</span>}
                                                         <div className="flex items-center gap-1.5 flex-wrap">
-                                                            {entry.achievements?.map((ach, i) => (
-                                                                <span key={i} title={ach.name} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${ach.name === 'ชนะติดต่อกัน 3 เกม' ? 'bg-orange-50 text-orange-600' : ach.name === 'เล่นครบ 100 เกม' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                                    <Icon icon={ach.icon} width={12} />
-                                                                    <span>{ach.name}</span>
-                                                                </span>
-                                                            ))}
+                                                            {entry.achievements?.map((ach: any, i) => {
+                                                                let colorCls = 'bg-emerald-50 text-emerald-600';
+                                                                if (ach.name === 'ชนะติดต่อกัน 3 เกม') colorCls = 'bg-orange-50 text-orange-600';
+                                                                else if (ach.name === 'เล่นครบ 100 เกม') colorCls = 'bg-blue-50 text-blue-600';
+                                                                else if (ach.type === 'troll') colorCls = 'bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-sm border border-red-400';
+
+                                                                return (
+                                                                    <span key={i} title={ach.name} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${colorCls}`}>
+                                                                        <Icon icon={ach.icon} width={10} />
+                                                                        <span>{ach.name}</span>
+                                                                    </span>
+                                                                );
+                                                            })}
                                                         </div>
                                                     </div>
                                                     {entry.skill_level && (
@@ -664,12 +680,19 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
                     {entry.display_name}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1">
-                    {entry.achievements?.map((ach, i) => (
-                        <span key={i} title={ach.name} className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase shadow-sm border ${ach.name === 'ชนะติดต่อกัน 3 เกม' ? 'bg-orange-500 text-white border-orange-400' : ach.name === 'เล่นครบ 100 เกม' ? 'bg-blue-500 text-white border-blue-400' : 'bg-emerald-500 text-white border-emerald-400'}`}>
-                            <Icon icon={ach.icon} width={10} />
-                            <span>{ach.name}</span>
-                        </span>
-                    ))}
+                    {entry.achievements?.map((ach: any, i) => {
+                        let colorCls = 'bg-emerald-500 text-white border-emerald-400';
+                        if (ach.name === 'ชนะติดต่อกัน 3 เกม') colorCls = 'bg-orange-500 text-white border-orange-400';
+                        else if (ach.name === 'เล่นครบ 100 เกม') colorCls = 'bg-blue-500 text-white border-blue-400';
+                        else if (ach.type === 'troll') colorCls = 'bg-gradient-to-r from-red-500 to-rose-600 text-white border-red-400 shadow-md transform hover:scale-105 transition-transform';
+
+                        return (
+                            <span key={i} title={ach.name} className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[8px] font-black uppercase shadow-sm border ${colorCls}`}>
+                                <Icon icon={ach.icon} width={10} />
+                                <span>{ach.name}</span>
+                            </span>
+                        );
+                    })}
                 </div>
             </div>
 

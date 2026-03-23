@@ -48,6 +48,16 @@ export const ACHIEVEMENTS: AchievementMetadata[] = [
         ]
     },
     {
+        id: 'lose_count',
+        name: 'ผู้ให้ที่แท้จริง',
+        description: 'จำนวนครั้งที่พ่ายแพ้ (แจกแต้ม)',
+        icon: 'solar:flag-2-bold',
+        category: 'games',
+        tiers: [
+            { level: 1, target: 20, label: 'แพ้เป็นพระ...', color: '#ea3333ff', badge: '💀', icon: 'solar:moon-stars-bold' },
+        ]
+    },
+    {
         id: 'streak_day',
         name: 'ชนะรวดวันเดียว',
         description: 'ชนะติดต่อกันในวันเดียว',
