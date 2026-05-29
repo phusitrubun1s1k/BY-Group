@@ -142,6 +142,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                             });
                         }
                     }
+                    
 
                     if (notificationsToInsert.length > 0) {
                         await supabase.from('notifications').insert(notificationsToInsert);
