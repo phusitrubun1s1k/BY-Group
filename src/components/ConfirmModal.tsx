@@ -13,6 +13,7 @@ interface ConfirmModalProps {
     type?: 'danger' | 'warning' | 'info';
 }
 
+
 export default function ConfirmModal({
     isOpen,
     title,
