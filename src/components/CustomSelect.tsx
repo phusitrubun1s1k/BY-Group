@@ -25,7 +25,7 @@ export default function CustomSelect({
     onChangeAction,
     options,
     label,
-    placeholder = 'เลือกตัวเลือก....',
+    placeholder = 'เลือกตัวเลือก...',
     className = '',
     icon
 }: CustomSelectProps) {
