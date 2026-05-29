@@ -39,7 +39,9 @@ const getSkillColor = (level: string | null | undefined) => {
 export default function MatchMakerPage({ params }: { params: Promise<{ eventId: string }> }) {
     const [eventId, setEventId] = useState('');
     const [event, setEvent] = useState<Event | null>(null);
-    const [players, setPlayers] = useState<EventPlayer[]>([]);
+        const [players, setPlayers] = useState<EventPlayer[]>([]);
+    const [paymentModalPlayer, setPaymentModalPlayer] = useState<EventPlayer | null>(null);
+    const [matchFilter, setMatchFilter] = useState<'all' | 'waiting' | 'playing' | 'finished'>('all');
     const [matches, setMatches] = useState<Match[]>([]);
     const [loading, setLoading] = useState(true);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -480,9 +482,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     };
 
     const handleDeleteMatch = async (matchId: string) => {
+        const m = matches.find(x => x.id === matchId);
+        const isWaiting = m?.status === 'waiting';
         const ok = await confirm({
-            title: 'ลบแมตช์?',
-            message: 'ยืนยันการลบแมตช์ที่จบแล้วนี้อย่างถาวร? ข้อมูลคะแนนและการใช้ลูกแบดในแมตช์นี้จะหายไป',
+            title: isWaiting ? 'ลบแมตช์ที่รอคิว?' : 'ลบแมตช์?',
+            message: isWaiting 
+                ? 'ต้องการลบแมตช์ที่กำลังรอคิวนี้ใช่หรือไม่?' 
+                : 'ยืนยันการลบแมตช์ที่จบแล้วนี้อย่างถาวร? ข้อมูลคะแนนและการใช้ลูกแบดในแมตช์นี้จะหายไป',
             type: 'danger',
             confirmText: 'ลบแมตช์นี้'
         });
@@ -554,27 +560,55 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         loadData(eventId);
     };
 
-    const togglePayment = async (ep: EventPlayer) => {
+        const togglePayment = async (ep: EventPlayer) => {
         const prof = ep.profiles as unknown as Profile;
-        const newStatus = ep.payment_status === 'paid' ? 'pending' : 'paid';
-        const ok = await confirm({
-            title: newStatus === 'paid' ? 'ยืนยันการชำระเงิน?' : 'ยกเลิกการชำระเงิน?',
-            message: newStatus === 'paid'
-                ? `บันทึกว่า ${prof?.display_name} ชำระเงินแล้วใช่หรือไม่?`
-                : `เปลี่ยนสถานะ ${prof?.display_name} เป็นยังไม่จ่ายใช่หรือไม่?`,
-            type: newStatus === 'paid' ? 'info' : 'warning',
-            confirmText: newStatus === 'paid' ? 'ยืนยันชำระเงิน' : 'ยืนยันยกเลิก'
-        });
-        if (!ok) return;
+        if (ep.payment_status === 'paid') {
+            const ok = await confirm({
+                title: 'ยกเลิกการชำระเงิน?',
+                message: `เปลี่ยนสถานะ ${prof?.display_name} เป็นยังไม่จ่ายใช่หรือไม่?`,
+                type: 'warning',
+                confirmText: 'ยืนยันยกเลิก'
+            });
+            if (!ok) return;
 
+            setUpdatingPayment(ep.user_id);
+            const supabase = createClient();
+            const { error } = await supabase
+                .from('event_players')
+                .update({ 
+                    payment_status: 'pending',
+                    payment_method: null
+                })
+                .eq('id', ep.id);
+            setUpdatingPayment(null);
+
+            if (error) { toast.error('อัปเดตไม่สำเร็จ'); return; }
+            toast.success('เปลี่ยนสถานะเป็นยังไม่จ่าย');
+            loadData(eventId);
+        } else {
+            setPaymentModalPlayer(ep);
+        }
+    };
+
+    const handleConfirmPayment = async (ep: EventPlayer, method: 'cash' | 'transfer') => {
+        setPaymentModalPlayer(null);
         setUpdatingPayment(ep.user_id);
         const supabase = createClient();
-        const { error } = await supabase.from('event_players').update({ payment_status: newStatus }).eq('id', ep.id);
+        const { error } = await supabase
+            .from('event_players')
+            .update({ 
+                payment_status: 'paid',
+                payment_method: method
+            })
+            .eq('id', ep.id);
         setUpdatingPayment(null);
 
-        if (error) { toast.error('อัปเดตไม่สำเร็จ'); return; }
-        toast.success(newStatus === 'paid' ? 'บันทึกว่าจ่ายแล้ว ✅' : 'เปลี่ยนสถานะเป็นยังไม่จ่าย');
-        loadData(eventId);
+        if (error) {
+            toast.error('อัปเดตไม่สำเร็จ');
+        } else {
+            toast.success(`ชำระเงินเรียบร้อยด้วย ${method === 'cash' ? 'เงินสด 💵' : 'โอนเงิน 📱'}`);
+            loadData(eventId);
+        }
     };
 
     const updateDiscount = async (ep: EventPlayer, discountValue: number) => {
@@ -671,7 +705,19 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         finished: { label: 'จบแล้ว', badge: 'badge-muted' },
     };
 
-    if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
+        if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
+
+    const transferTotal = players
+        .filter(p => p.payment_status === 'paid' && p.payment_method === 'transfer')
+        .reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0);
+
+    const cashTotal = players
+        .filter(p => p.payment_status === 'paid' && p.payment_method === 'cash')
+        .reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0);
+
+    const matchesWithIndex = matches.map((m, idx) => ({ ...m, originalIndex: idx + 1 }));
+    const filteredMatches = matchesWithIndex.filter(m => matchFilter === 'all' || m.status === matchFilter);
+    const sortedMatches = [...filteredMatches].sort((a, b) => b.originalIndex - a.originalIndex);
 
     return (
         <>
@@ -718,10 +764,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 </div>
                             )}
 
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100">
+                                                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100" title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
                                 <Icon icon="solar:wallet-money-linear" width={16} className="text-green-500" />
                                 <span className="text-xs font-semibold text-green-700">
-                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()}
+                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()} <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} | สด ฿{cashTotal.toLocaleString()})</span>
                                 </span>
                             </div>
                             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100">
@@ -1228,7 +1274,46 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             document.body
                         )}
 
-                        {/* Matches */}
+                                                {/* Matches */}
+                        {matches.length > 0 && (
+                            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                                <div className="flex items-center gap-1.5 p-1 rounded-xl bg-gray-100/80 border border-gray-200/50 backdrop-blur-sm shadow-sm shrink-0">
+                                    {[
+                                        { id: 'all', label: 'ทั้งหมด', icon: 'solar:hamburger-menu-bold-duotone', count: matches.length },
+                                        { id: 'waiting', label: 'รอคิว', icon: 'solar:hourglass-bold-duotone', count: matches.filter(m => m.status === 'waiting').length, color: 'var(--warning)' },
+                                        { id: 'playing', label: 'กำลังตี', icon: 'solar:play-bold-duotone', count: matches.filter(m => m.status === 'playing').length, color: 'var(--success)' },
+                                        { id: 'finished', label: 'จบแมท', icon: 'solar:check-circle-bold-duotone', count: matches.filter(m => m.status === 'finished').length, color: 'var(--gray-500)' },
+                                    ].map((tab) => {
+                                        const isSelected = matchFilter === tab.id;
+                                        return (
+                                            <button
+                                                key={tab.id}
+                                                onClick={() => setMatchFilter(tab.id as any)}
+                                                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${
+                                                    isSelected 
+                                                        ? 'bg-white shadow-sm text-gray-900 scale-[1.02]' 
+                                                        : 'text-gray-500 hover:text-gray-900 hover:bg-white/40'
+                                                }`}
+                                            >
+                                                <Icon icon={tab.icon} width={14} style={{ color: isSelected && tab.color ? tab.color : 'inherit' }} />
+                                                <span>{tab.label}</span>
+                                                {tab.count > 0 && (
+                                                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                                                        isSelected ? 'bg-gray-100 text-gray-700' : 'bg-gray-200/60 text-gray-500'
+                                                    }`}>
+                                                        {tab.count}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <div className="text-xs font-semibold text-gray-400">
+                                    เรียงลำดับ: แมทช์ใหม่สุดอยู่บน 🕒
+                                </div>
+                            </div>
+                        )}
+
                         {matches.length === 0 ? (
                             <div className="card text-center shadow-sm" style={{ padding: '64px 32px' }}>
                                 <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm" style={{ background: 'var(--gray-100)' }}>
@@ -1237,9 +1322,16 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 <h2 className="text-xl font-bold mb-2 tracking-tight" style={{ color: 'var(--gray-900)' }}>ยังไม่มีแมตช์</h2>
                                 <p className="text-sm font-medium mb-8" style={{ color: 'var(--gray-500)' }}>กดปุ่ม "สร้างแมตช์ใหม่" เพื่อเริ่มต้นความสนุก</p>
                             </div>
+                        ) : sortedMatches.length === 0 ? (
+                            <div className="card text-center shadow-sm" style={{ padding: '48px 32px' }}>
+                                <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 bg-gray-50 border">
+                                    <Icon icon="solar:box-minimalistic-linear" width={24} className="text-gray-400" />
+                                </div>
+                                <p className="text-sm font-bold text-gray-900">ไม่มีแมตช์ในหมวดหมู่นี้</p>
+                            </div>
                         ) : (
                             <div className="space-y-3">
-                                {matches.map((match, i) => {
+                                {sortedMatches.map((match) => {
                                     const cfg = statusCfg[match.status];
                                     const tA = match.match_players?.filter((mp) => mp.team === 'A') || [];
                                     const tB = match.match_players?.filter((mp) => mp.team === 'B') || [];
@@ -1249,7 +1341,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         <div key={match.id} className="card shadow-sm" style={{ padding: '20px 24px' }}>
                                             <div className="flex items-center justify-between mb-4">
                                                 <div className="flex flex-wrap items-center gap-2">
-                                                    <span className="badge badge-muted shrink-0">#{match.match_number || i + 1}</span>
+                                                    <span className="badge badge-muted shrink-0">#{match.match_number || match.originalIndex}</span>
                                                     <span className={`badge shrink-0 ${cfg.badge}`}>{cfg.label}</span>
                                                     <span className="text-[10px] font-black px-2 py-0.5 rounded shadow-sm bg-gray-900 text-white shrink-0">
                                                         คอร์ท {match.court_number}
@@ -1287,9 +1379,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     <Icon icon="solar:pen-linear" width={14} /> แก้ไข
                                                                 </button>
                                                                 {match.status === 'waiting' && (
-                                                                    <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(22,163,74,0.06)', color: 'var(--success)' }}>
-                                                                        <Icon icon="solar:play-linear" width={14} /> เริ่ม
-                                                                    </button>
+                                                                    <div className="flex gap-1.5">
+                                                                        <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(22,163,74,0.06)', color: 'var(--success)' }}>
+                                                                            <Icon icon="solar:play-linear" width={14} /> เริ่ม
+                                                                        </button>
+                                                                        <button onClick={() => handleDeleteMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }} title="ลบแมตช์ที่รอคิวนี้">
+                                                                            <Icon icon="solar:trash-bin-trash-bold" width={14} /> ลบ
+                                                                        </button>
+                                                                    </div>
                                                                 )}
                                                                 {match.status === 'playing' && (
                                                                     <div className="flex gap-1.5">
@@ -1327,7 +1424,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     }}>
                                                                         {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
                                                                         {(mp.profiles as unknown as Profile)?.is_guest && <span className="text-[10px] font-bold text-orange-500 mx-1 bg-orange-50 px-1 py-0.5 rounded">ขาจร</span>}
-                                                                        (#{match.match_number || i + 1})
+                                                                        (#{match.match_number || match.originalIndex})
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1380,7 +1477,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                     }}>
                                                                         {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
                                                                         {(mp.profiles as unknown as Profile)?.is_guest && <span className="text-[10px] font-bold text-blue-500 mx-1 bg-blue-50 px-1 py-0.5 rounded">ขาจร</span>}
-                                                                        (#{match.match_number || i + 1})
+                                                                        (#{match.match_number || match.originalIndex})
                                                                     </p>
                                                                     {isPaid && (
                                                                         <span title="จ่ายแล้ว" className="flex shrink-0">
@@ -1422,11 +1519,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         <div className="text-left">
                                             <p className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>สถานะการจ่ายเงิน</p>
                                             <div className="flex items-center gap-2 mt-0.5">
-                                                <p className="text-xs" style={{ color: 'var(--gray-500)' }}>
+                                                                                                <p className="text-xs" style={{ color: 'var(--gray-500)' }}>
                                                     จ่ายแล้ว {players.filter(p => p.payment_status === 'paid').length}/{players.length} คน
                                                 </p>
-                                                <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(22,163,74,0.1)', color: 'var(--success)' }}>
-                                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()}
+                                                <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(22,163,74,0.1)', color: 'var(--success)' }} title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
+                                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()} <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} | สด ฿{cashTotal.toLocaleString()})</span>
                                                 </span>
                                                 <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6' }}>
                                                     ยอดทั้งหมด ฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}
@@ -1567,7 +1664,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             </div>
 
                                                             <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'}`}>
-                                                                {isPaid ? 'จ่ายแล้ว' : 'ยังไม่จ่าย'}
+                                                                {isPaid ? (ep.payment_method === 'transfer' ? 'โอนเงิน 📱' : ep.payment_method === 'cash' ? 'เงินสด 💵' : 'จ่ายแล้ว') : 'ยังไม่จ่าย'}
                                                             </span>
                                                             <button
                                                                 onClick={() => togglePayment(ep)}
@@ -2206,9 +2303,58 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 </div>
                             </div>
                         </div>
-                    )}
+                                        )}
                 </div>
             </div>
+
+            {/* Payment Method Selector Modal */}
+            {paymentModalPlayer && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in fade-in" style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }} onClick={() => setPaymentModalPlayer(null)}>
+                    <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 overflow-hidden p-6 animate-in slide-in-from-bottom-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center text-green-600 shrink-0">
+                                <Icon icon="solar:wallet-money-bold" width={22} />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-bold text-gray-950">เลือกวิธีการชำระเงิน</h3>
+                                <p className="text-xs text-gray-500 font-medium">
+                                    {(paymentModalPlayer.profiles as unknown as Profile)?.display_name} • ยอดชำระ ฿{(userBills[paymentModalPlayer.user_id] || 0).toLocaleString()}
+                                </p>
+                            </div>
+                        </div>
+
+                        <p className="text-sm font-medium text-gray-600 mb-6 leading-relaxed">
+                            กรุณาระบุช่องทางการชำระเงินสำหรับยอดคิวของวันนี้ เพื่อนำไปจัดเก็บสถิติและแสดงผลข้อมูลทางการเงินของก๊วน
+                        </p>
+
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                            <button
+                                onClick={() => handleConfirmPayment(paymentModalPlayer, 'transfer')}
+                                className="flex flex-col items-center justify-center p-4 rounded-xl border border-blue-200 bg-blue-50/20 text-blue-600 hover:bg-blue-50/50 transition-all font-bold gap-2 text-sm shadow-sm"
+                            >
+                                <Icon icon="solar:smartphone-line-duotone" width={32} />
+                                โอนเงิน (Transfer)
+                            </button>
+                            <button
+                                onClick={() => handleConfirmPayment(paymentModalPlayer, 'cash')}
+                                className="flex flex-col items-center justify-center p-4 rounded-xl border border-emerald-200 bg-emerald-50/20 text-emerald-600 hover:bg-emerald-50/50 transition-all font-bold gap-2 text-sm shadow-sm"
+                            >
+                                <Icon icon="solar:notes-line-duotone" width={32} />
+                                เงินสด (Cash)
+                            </button>
+                        </div>
+
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setPaymentModalPlayer(null)}
+                                className="btn btn-secondary w-full btn-sm"
+                            >
+                                ยกเลิก
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 }

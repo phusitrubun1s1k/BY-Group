@@ -19,6 +19,7 @@ interface PlayerBill {
     totalOwed?: number; // Grand Total for selected period
     totalPaid?: number; // Total Paid for selected period
     paymentStatus: 'pending' | 'paid';
+    paymentMethod?: 'cash' | 'transfer' | null;
     slipUrl: string | null;
     shuttlecockNums?: string;
     shuttlecockCount?: number;
@@ -36,8 +37,9 @@ export default function AdminBillingPage() {
     const [loading, setLoading] = useState(true);
     const [viewingSlip, setViewingSlip] = useState<string | null>(null);
     const [historyUser, setHistoryUser] = useState<{ id: string; name: string } | null>(null);
-    const [historyData, setHistoryData] = useState<any[]>([]);
+        const [historyData, setHistoryData] = useState<any[]>([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
+    const [paymentModalBill, setPaymentModalBill] = useState<PlayerBill | null>(null);
     const confirm = useConfirm();
     const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
     const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
@@ -320,30 +322,53 @@ export default function AdminBillingPage() {
         }
     }, [selectedEventId, selectedMonth, loadBills]);
 
-    const togglePayment = async (bill: PlayerBill) => {
-        const newStatus = bill.paymentStatus === 'paid' ? 'pending' : 'paid';
-        const ok = await confirm({
-            title: newStatus === 'paid' ? 'ยืนยันการชำระเงิน?' : 'ยกเลิกการชำระเงิน?',
-            message: newStatus === 'paid'
-                ? `ต้องการบันทึกว่า ${bill.displayName} ชำระเงินจำนวน ฿${bill.amount.toFixed(0)} แล้วใช่หรือไม่?`
-                : `ต้องการเปลี่ยนสถานะของ ${bill.displayName} เป็นยังไม่ได้ชำระเงินใช่หรือไม่?`,
-            type: newStatus === 'paid' ? 'info' : 'warning',
-            confirmText: newStatus === 'paid' ? 'ยืนยันชำระเงิน' : 'ยืนยันยกเลิก'
-        });
-
-        if (!ok) return;
-
+        const handleConfirmPayment = async (bill: PlayerBill, method: 'cash' | 'transfer') => {
+        setPaymentModalBill(null);
         const supabase = createClient();
         const { error } = await supabase
             .from('event_players')
-            .update({ payment_status: newStatus })
+            .update({ 
+                payment_status: 'paid',
+                payment_method: method
+            })
             .eq('id', bill.eventPlayerId);
 
         if (error) {
             toast.error('อัปเดตไม่สำเร็จ');
         } else {
-            toast.success(newStatus === 'paid' ? 'บันทึกว่าจ่ายแล้ว' : 'เปลี่ยนสถานะเป็นยังไม่จ่าย');
+            toast.success(`ชำระเงินเรียบร้อยด้วย ${method === 'cash' ? 'เงินสด 💵' : 'โอนเงิน 📱'}`);
             loadBills();
+        }
+    };
+
+    const togglePayment = async (bill: PlayerBill) => {
+        if (bill.paymentStatus === 'paid') {
+            const ok = await confirm({
+                title: 'ยกเลิกการชำระเงิน?',
+                message: `ต้องการเปลี่ยนสถานะของ ${bill.displayName} เป็นยังไม่ได้ชำระเงินใช่หรือไม่?`,
+                type: 'warning',
+                confirmText: 'ยืนยันยกเลิก'
+            });
+
+            if (!ok) return;
+
+            const supabase = createClient();
+            const { error } = await supabase
+                .from('event_players')
+                .update({ 
+                    payment_status: 'pending',
+                    payment_method: null
+                })
+                .eq('id', bill.eventPlayerId);
+
+            if (error) {
+                toast.error('อัปเดตไม่สำเร็จ');
+            } else {
+                toast.success('เปลี่ยนสถานะเป็นยังไม่จ่าย');
+                loadBills();
+            }
+        } else {
+            setPaymentModalBill(bill);
         }
     };
 
@@ -353,9 +378,17 @@ export default function AdminBillingPage() {
     const totalPaid = selectedEventId === 'all'
         ? (bills as any[]).reduce((s, b) => s + (b.totalPaid || 0), 0)
         : bills.filter((b) => b.paymentStatus === 'paid').reduce((s, b) => s + b.amount, 0);
-    const totalOwed = selectedEventId === 'all'
+        const totalOwed = selectedEventId === 'all'
         ? (bills as any[]).reduce((s, b) => s + (b.totalOwed || 0), 0)
         : bills.reduce((s, b) => s + b.amount, 0);
+
+    const transferTotal = selectedEventId === 'all'
+        ? (bills as any[]).reduce((s, b) => s + (b.paymentMethod === 'transfer' ? (b.totalPaid || 0) : 0), 0)
+        : bills.filter((b) => b.paymentStatus === 'paid' && b.paymentMethod === 'transfer').reduce((s, b) => s + b.amount, 0);
+
+    const cashTotal = selectedEventId === 'all'
+        ? (bills as any[]).reduce((s, b) => s + (b.paymentMethod === 'cash' ? (b.totalPaid || 0) : 0), 0)
+        : bills.filter((b) => b.paymentStatus === 'paid' && b.paymentMethod === 'cash').reduce((s, b) => s + b.amount, 0);
 
     const paidCount = bills.filter((b) => b.paymentStatus === 'paid').length;
     const pendingCount = bills.filter((b) => b.paymentStatus === 'pending').length;
@@ -543,7 +576,13 @@ export default function AdminBillingPage() {
                 <div className="col-span-1 lg:col-span-12 grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
                     {[
                         { label: 'ยอดค้างชำระรวม', value: `฿${totalPending.toFixed(0)}`, icon: 'solar:wallet-linear', color: 'var(--danger)' },
-                        { label: 'ชำระแล้วทั้งหมด', value: `฿${totalPaid.toFixed(0)}`, icon: 'solar:check-circle-linear', color: 'var(--success)' },
+                                                { 
+                            label: 'ชำระแล้วทั้งหมด', 
+                            value: `฿${totalPaid.toFixed(0)}`, 
+                            extra: `โอน ฿${transferTotal.toFixed(0)} | สด ฿${cashTotal.toFixed(0)}`,
+                            icon: 'solar:check-circle-linear', 
+                            color: 'var(--success)' 
+                        },
                         { label: 'จ่ายครบแล้ว', value: `${paidCount} คน`, icon: 'solar:user-check-rounded-linear', color: 'var(--success)' },
                         { label: 'ยังค้างชำระ', value: `${pendingCount} คน`, icon: 'solar:user-cross-rounded-linear', color: 'var(--warning)' },
                     ].map((item, i) => (
@@ -685,18 +724,18 @@ export default function AdminBillingPage() {
                                                 </span>
                                             </div>
 
-                                            {/* Status */}
+                                                                                        {/* Status */}
                                             <div className="hidden sm:flex col-span-1 justify-center">
                                                 <span className={`badge ${bill.paymentStatus === 'paid' ? 'badge-success' : 'badge-warning'}`}>
-                                                    {bill.paymentStatus === 'paid' ? 'จ่ายครบแล้ว' : 'มียอดค้าง'}
+                                                    {bill.paymentStatus === 'paid' ? (bill.paymentMethod === 'transfer' ? 'โอนเงิน 📱' : bill.paymentMethod === 'cash' ? 'เงินสด 💵' : 'จ่ายครบแล้ว') : 'มียอดค้าง'}
                                                 </span>
                                             </div>
 
                                             {/* Actions */}
                                             <div className="sm:col-span-2 flex items-center justify-end sm:justify-center gap-2 mt-2 sm:mt-0">
-                                                {/* Mobile status badge */}
+                                                                                                {/* Mobile status badge */}
                                                 <span className={`badge sm:hidden ${bill.paymentStatus === 'paid' ? 'badge-success' : 'badge-warning'}`}>
-                                                    {bill.paymentStatus === 'paid' ? 'จ่ายครบแล้ว' : selectedEventId === 'all' ? 'มียอดค้าง' : 'ยังไม่จ่าย'}
+                                                    {bill.paymentStatus === 'paid' ? (bill.paymentMethod === 'transfer' ? 'โอนเงิน 📱' : bill.paymentMethod === 'cash' ? 'เงินสด 💵' : 'จ่ายครบแล้ว') : selectedEventId === 'all' ? 'มียอดค้าง' : 'ยังไม่จ่าย'}
                                                 </span>
                                                 <div className="flex items-center gap-2 ml-auto sm:ml-0">
                                                     <button
@@ -820,19 +859,19 @@ export default function AdminBillingPage() {
                                                 </div>
                                             </div>
 
-                                            <div className="flex items-center gap-3">
-                                                <span className={`badge ${item.status === 'paid' ? 'badge-success' : 'badge-warning'}`}>
-                                                    {item.status === 'paid' ? 'จ่ายแล้ว' : 'ค้างชำระ'}
-                                                </span>
+                                                                                        <div className="flex items-center gap-2">
                                                 {item.slipUrl && (
                                                     <button
                                                         onClick={() => setViewingSlip(item.slipUrl)}
-                                                        className="w-8 h-8 rounded-lg flex items-center justify-center border bg-white hover:bg-gray-50 transition-colors shadow-sm"
+                                                        className="btn btn-ghost btn-sm p-1 h-auto min-h-0"
                                                         title="ดูสลิป"
                                                     >
-                                                        <Icon icon="solar:gallery-linear" width={16} style={{ color: 'var(--gray-600)' }} />
+                                                        <Icon icon="solar:gallery-linear" width={16} style={{ color: 'var(--gray-500)' }} />
                                                     </button>
                                                 )}
+                                                <span className={`badge ${item.status === 'paid' ? 'badge-success' : 'badge-warning'}`}>
+                                                    {item.status === 'paid' ? (item.paymentMethod === 'transfer' ? 'โอนเงิน 📱' : item.paymentMethod === 'cash' ? 'เงินสด 💵' : 'จ่ายแล้ว') : 'ยังไม่จ่าย'}
+                                                </span>
                                             </div>
                                         </div>
                                     ))}
@@ -847,7 +886,7 @@ export default function AdminBillingPage() {
                 </div>
             )}
 
-            {/* Slip Viewer Modal */}
+                        {/* Slip Viewer Modal */}
             {viewingSlip && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in duration-200" onClick={() => setViewingSlip(null)}>
                     <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" />
@@ -859,6 +898,55 @@ export default function AdminBillingPage() {
                             </button>
                         </div>
                         <img src={viewingSlip} alt="Payment Slip" className="w-full rounded-xl" style={{ maxHeight: '70vh', objectFit: 'contain' }} />
+                    </div>
+                </div>
+            )}
+
+            {/* Payment Method Selector Modal */}
+            {paymentModalBill && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in fade-in" style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }} onClick={() => setPaymentModalBill(null)}>
+                    <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 overflow-hidden p-6 animate-in slide-in-from-bottom-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center text-green-600 shrink-0">
+                                <Icon icon="solar:wallet-money-bold" width={22} />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-bold text-gray-950">เลือกวิธีการชำระเงิน</h3>
+                                <p className="text-xs text-gray-500 font-medium">
+                                    {paymentModalBill.displayName} • ยอดชำระ ฿{paymentModalBill.amount.toLocaleString()}
+                                </p>
+                            </div>
+                        </div>
+
+                        <p className="text-sm font-medium text-gray-600 mb-6 leading-relaxed">
+                            กรุณาระบุช่องทางการชำระเงินสำหรับยอดคิวของรอบนี้ เพื่อนำไปจัดเก็บสถิติและแสดงผลข้อมูลทางการเงินของก๊วน
+                        </p>
+
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                            <button
+                                onClick={() => handleConfirmPayment(paymentModalBill, 'transfer')}
+                                className="flex flex-col items-center justify-center p-4 rounded-xl border border-blue-200 bg-blue-50/20 text-blue-600 hover:bg-blue-50/50 transition-all font-bold gap-2 text-sm shadow-sm"
+                            >
+                                <Icon icon="solar:smartphone-line-duotone" width={32} />
+                                โอนเงิน (Transfer)
+                            </button>
+                            <button
+                                onClick={() => handleConfirmPayment(paymentModalBill, 'cash')}
+                                className="flex flex-col items-center justify-center p-4 rounded-xl border border-emerald-200 bg-emerald-50/20 text-emerald-600 hover:bg-emerald-50/50 transition-all font-bold gap-2 text-sm shadow-sm"
+                            >
+                                <Icon icon="solar:notes-line-duotone" width={32} />
+                                เงินสด (Cash)
+                            </button>
+                        </div>
+
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setPaymentModalBill(null)}
+                                className="btn btn-secondary w-full btn-sm"
+                            >
+                                ยกเลิก
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

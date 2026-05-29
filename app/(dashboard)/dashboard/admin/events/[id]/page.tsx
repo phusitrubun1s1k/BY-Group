@@ -80,6 +80,78 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         setClosing(true);
         const supabase = createClient();
         await supabase.from('events').update({ status: 'closed' }).eq('id', eventId);
+        
+        try {
+            // 1. Fetch the latest executed reset date
+            const { data: resets } = await supabase
+                .from('rank_reset_schedule')
+                .select('reset_at')
+                .eq('status', 'executed')
+                .order('reset_at', { ascending: false })
+                .limit(1);
+            const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
+
+            // 2. Fetch all closed events after this reset date
+            const { data: closedEvents } = await supabase
+                .from('events')
+                .select('id, event_date, created_at')
+                .eq('status', 'closed')
+                .gt('created_at', resetDate)
+                .order('created_at', { ascending: true });
+
+            if (closedEvents && closedEvents.length > 0) {
+                // 3. Fetch all registrations for these events
+                const { data: registrations } = await supabase
+                    .from('event_players')
+                    .select('user_id, event_id')
+                    .in('event_id', closedEvents.map(e => e.id));
+                const regSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+
+                // 4. Fetch all active profiles
+                const { data: activeProfiles } = await supabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('is_guest', false);
+
+                if (activeProfiles) {
+                    const notificationsToInsert = [];
+                    for (const p of activeProfiles) {
+                        let absences = 0;
+                        // Count consecutive absences backwards
+                        for (let j = closedEvents.length - 1; j >= 0; j--) {
+                            if (!regSet.has(`${p.id}_${closedEvents[j].id}`)) {
+                                absences++;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // Send notification if they missed the current event (which is closedEvents[closedEvents.length-1])
+                        if (absences > 0 && !regSet.has(`${p.id}_${eventId}`)) {
+                            const title = absences >= 3 ? 'แจ้งเตือน: ถูกระงับการติดอันดับชั่วคราว ❌' : 'แจ้งเตือนการขาดก๊วน 🏸';
+                            const body = absences >= 3
+                                ? `คุณขาดก๊วนติดต่อกันครบ ${absences} ครั้งแล้ว (หลังจากรีแรงค์) ระบบจึงนำรายชื่อของคุณออกจากตารางอันดับชั่วคราว กรุณาเข้าร่วมก๊วนครั้งถัดไปเพื่อกลับเข้าสู่อันดับ`
+                                : `คุณไม่ได้เข้าร่วมก๊วนติดต่อกัน ${absences} ครั้งแล้วหลังจากรีแรงค์ หากขาดติดต่อกันเกิน 3 ครั้ง รายชื่อจะถูกนำออกจากตารางจัดอันดับชั่วคราว`;
+                            
+                            notificationsToInsert.push({
+                                user_id: p.id,
+                                title,
+                                body,
+                                type: 'system',
+                                link_url: '/dashboard/leaderboard'
+                            });
+                        }
+                    }
+
+                    if (notificationsToInsert.length > 0) {
+                        await supabase.from('notifications').insert(notificationsToInsert);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Error calculating absences or sending notifications:', err);
+        }
+
         toast.success('ปิดก๊วนแล้ว');
         setClosing(false);
         loadData(eventId);

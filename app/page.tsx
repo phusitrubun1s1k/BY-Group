@@ -12,13 +12,58 @@ export default async function HomePage() {
     redirect('/dashboard');
   }
 
-  const { data: leaderboard } = await supabase
+  const { data: rawLeaderboard } = await supabase
     .from('view_leaderboard')
-    .select('display_name, total_wins, skill_level')
-    .order('total_wins', { ascending: false })
-    .limit(10);
+    .select('user_id, display_name, total_wins, skill_level, total_games')
+    .order('total_wins', { ascending: false });
 
-  const topPlayers = leaderboard || [];
+  // Calculate absences and filter out players with >= 3 consecutive absences
+  let filteredLeaderboard = rawLeaderboard || [];
+  try {
+    const { data: resets } = await supabase
+      .from('rank_reset_schedule')
+      .select('reset_at')
+      .eq('status', 'executed')
+      .order('reset_at', { ascending: false })
+      .limit(1);
+    const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
+
+    const { data: closedEvents } = await supabase
+      .from('events')
+      .select('id, event_date, created_at')
+      .eq('status', 'closed')
+      .gt('created_at', resetDate)
+      .order('created_at', { ascending: true });
+
+    if (closedEvents && closedEvents.length > 0 && rawLeaderboard) {
+      const { data: registrations } = await supabase
+        .from('event_players')
+        .select('user_id, event_id')
+        .in('event_id', closedEvents.map(e => e.id));
+      const regSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+
+      filteredLeaderboard = rawLeaderboard.filter(r => {
+        if (r.total_games <= 0) return false;
+        
+        let absences = 0;
+        for (let j = closedEvents.length - 1; j >= 0; j--) {
+          if (!regSet.has(`${r.user_id}_${closedEvents[j].id}`)) {
+            absences++;
+          } else {
+            break;
+          }
+        }
+        return absences < 3;
+      });
+    } else {
+      // If no closed events yet, just filter out players with 0 games
+      filteredLeaderboard = (rawLeaderboard || []).filter(r => r.total_games > 0);
+    }
+  } catch (err) {
+    console.error('Error filtering leaderboard on landing page:', err);
+  }
+
+  const topPlayers = filteredLeaderboard.slice(0, 10);
   const top3 = topPlayers.slice(0, 3);
   const others = topPlayers.slice(3);
 

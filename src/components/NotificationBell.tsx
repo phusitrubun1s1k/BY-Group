@@ -145,7 +145,7 @@ export default function NotificationBell({ userId }: NotificationBellProps) {
             {/* Dropdown */}
             {isOpen && (
                 <div 
-                    className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2"
+                    className="absolute right-0 top-full mt-2 lg:bottom-full lg:top-auto lg:mb-2 lg:mt-0 lg:-left-48 lg:right-auto w-80 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 lg:slide-in-from-bottom-2"
                     style={{ borderColor: 'var(--gray-200)' }}
                 >
                     <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50/50" style={{ borderColor: 'var(--gray-100)' }}>

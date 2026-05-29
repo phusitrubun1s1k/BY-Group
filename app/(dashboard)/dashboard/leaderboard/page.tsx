@@ -41,6 +41,7 @@ export default function LeaderboardPage() {
     const [data, setData] = useState<LeaderboardEntry[]>([]);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [myPersonalData, setMyPersonalData] = useState<LeaderboardEntry | null>(null);
+    const [myAbsences, setMyAbsences] = useState<number>(0);
     const [loading, setLoading] = useState(true);
     const [activeFilter, setActiveFilter] = useState<FilterKey>('mmr' as any);
     const [selectedMonth, setSelectedMonth] = useState<string>('all'); // 'all' or 'YYYY-MM'
@@ -120,6 +121,60 @@ export default function LeaderboardPage() {
             return;
         }
 
+        // Calculate consecutive absences since last reset if overall leaderboard is selected
+        let activeUserAbsences: Record<string, number> = {};
+        if (selectedMonth === 'all') {
+            try {
+                // Fetch the latest executed reset date
+                const { data: resets } = await supabase
+                    .from('rank_reset_schedule')
+                    .select('reset_at')
+                    .eq('status', 'executed')
+                    .order('reset_at', { ascending: false })
+                    .limit(1);
+                const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
+
+                // Fetch all closed events after this reset date
+                const { data: closedEvents } = await supabase
+                    .from('events')
+                    .select('id, event_date, created_at')
+                    .eq('status', 'closed')
+                    .gt('created_at', resetDate)
+                    .order('created_at', { ascending: true });
+
+                if (closedEvents && closedEvents.length > 0) {
+                    // Fetch all registrations for these events
+                    const { data: registrations } = await supabase
+                        .from('event_players')
+                        .select('user_id, event_id')
+                        .in('event_id', closedEvents.map(e => e.id));
+                    const regSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+
+                    // Count absences for each user in rows
+                    const userIds = rows?.map(r => r.user_id) || [];
+                    for (const userId of userIds) {
+                        let absences = 0;
+                        for (let j = closedEvents.length - 1; j >= 0; j--) {
+                            if (!regSet.has(`${userId}_${closedEvents[j].id}`)) {
+                                absences++;
+                            } else {
+                                break;
+                            }
+                        }
+                        activeUserAbsences[userId] = absences;
+                    }
+                }
+            } catch (err) {
+                console.error('Error calculating absences on leaderboard:', err);
+            }
+        }
+
+        if (user && activeUserAbsences[user.id]) {
+            setMyAbsences(activeUserAbsences[user.id]);
+        } else {
+            setMyAbsences(0);
+        }
+
         // Fetch badges for these users
         const userIds = rows?.map(r => r.user_id) || [];
         const { data: userBadges } = await supabase
@@ -137,7 +192,13 @@ export default function LeaderboardPage() {
         });
 
         const dataWithAchievements = (rows || [])
-            .filter(r => r.total_games > 0)
+            .filter(r => {
+                if (r.total_games <= 0) return false;
+                if (selectedMonth === 'all' && (activeUserAbsences[r.user_id] || 0) >= 3) {
+                    return false;
+                }
+                return true;
+            })
             .map(r => {
                 const achs = [...(achievementsMap[r.user_id] || [])];
                 const loseCount = r.total_games - r.total_wins;
@@ -337,6 +398,32 @@ export default function LeaderboardPage() {
                                     })()}
                                 </div>
 
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Absence Warning Banner */}
+                    {selectedMonth === 'all' && myAbsences > 0 && (
+                        <div className={`mb-8 p-5 rounded-2xl border flex items-start gap-4 transition-all duration-300 animate-in fade-in slide-in-from-top-4 ${
+                            myAbsences >= 3 
+                                ? 'bg-rose-50 border-rose-200 text-rose-800' 
+                                : 'bg-amber-50 border-amber-200 text-amber-800'
+                        }`}>
+                            <div className={`p-2.5 rounded-xl shrink-0 ${
+                                myAbsences >= 3 ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'
+                            }`}>
+                                <Icon icon={myAbsences >= 3 ? 'solar:danger-bold' : 'solar:bell-bing-bold'} width={22} />
+                            </div>
+                            <div className="flex-1">
+                                <h3 className="text-sm font-black mb-1">
+                                    {myAbsences >= 3 ? 'คุณถูกระงับการติดอันดับชั่วคราว ❌' : 'แจ้งเตือนการขาดก๊วน 🏸'}
+                                </h3>
+                                <p className="text-xs font-semibold opacity-90 leading-relaxed">
+                                    {myAbsences >= 3 
+                                        ? `คุณขาดก๊วนติดต่อกันครบ ${myAbsences} ครั้งแล้วหลังจากรีแรงค์ ระบบจึงนำรายชื่อของคุณออกจากตารางอันดับชั่วคราว กรุณาลงก๊วนเล่นแมตช์ในครั้งถัดไปเพื่อกลับเข้าสู่อันดับ`
+                                        : `คุณไม่ได้เข้าร่วมก๊วนติดต่อกัน ${myAbsences} ครั้งแล้วหลังจากรีแรงค์ หากขาดติดต่อกันครบ 3 ครั้ง รายชื่อของคุณจะถูกนำออกจากการติดอันดับชั่วคราว`
+                                    }
+                                </p>
                             </div>
                         </div>
                     )}

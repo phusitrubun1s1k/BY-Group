@@ -40,6 +40,7 @@ export interface EventPlayer {
     is_substitute: boolean;
     discount: number;
     additional_cost?: number;
+    payment_method?: 'cash' | 'transfer' | null;
     created_at: string;
     profiles?: Profile;
     events?: Event;
