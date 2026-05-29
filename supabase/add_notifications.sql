@@ -34,6 +34,11 @@ CREATE POLICY "Admins can insert notifications"
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') OR auth.uid() = user_id
   );
 
+CREATE POLICY "Users can delete own notifications"
+  ON public.notifications FOR DELETE USING (
+    auth.uid() = user_id OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  );
+
 -- 3. Enable Realtime for Notifications Table
 ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
 
