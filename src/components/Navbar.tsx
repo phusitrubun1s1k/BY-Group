@@ -27,6 +27,7 @@ const adminMenuItems = [
     { href: '/dashboard/admin/matches', label: 'จัดแมตช์', icon: 'solar:sort-horizontal-linear' },
     { href: '/dashboard/admin/billing', label: 'จัดการเงิน', icon: 'solar:wallet-linear' },
     { href: '/dashboard/admin/users', label: 'จัดการสมาชิก', icon: 'solar:users-group-rounded-linear' },
+    { href: '/dashboard/admin/absences', label: 'ประวัติการเข้าก๊วน', icon: 'solar:calendar-date-linear' },
     { href: '/dashboard/admin/rank-reset', label: 'รีแรงค์', icon: 'solar:restart-linear' },
     { href: '/dashboard/history', label: 'ประวัติก๊วน', icon: 'solar:clock-circle-linear' },
 ];

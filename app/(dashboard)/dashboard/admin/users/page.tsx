@@ -18,6 +18,36 @@ const ROLE_OPTIONS: SelectOption[] = [
     { value: 'admin', label: 'Admin - ผู้ดูแลระบบ', icon: 'solar:shield-user-bold', description: 'สามารถจัดการสมาชิก แมตช์ และการเงินได้ทั้งหมด' },
 ];
 
+function formatAbsenceReason(
+    reason: string, 
+    allClosedEvents: { id: string; event_date: string }[], 
+    userRegistrations: Set<string>
+) {
+    if (!reason?.startsWith('absence_penalty:')) {
+        return 'หักแต้มสะสมเนื่องจากขาดเล่นก๊วน 🏸';
+    }
+    const eventId = reason.split(':')[1];
+    const targetEventIdx = allClosedEvents.findIndex(e => e.id === eventId);
+    if (targetEventIdx === -1) {
+        return 'หักแต้มสะสมเนื่องจากขาดเล่นก๊วน 🏸';
+    }
+
+    // Walk backward to calculate consecutive misses up to targetEvent
+    const missedDates: string[] = [];
+    for (let i = targetEventIdx; i >= 0; i--) {
+        const ev = allClosedEvents[i];
+        if (!userRegistrations.has(ev.id)) {
+            const dateStr = new Date(ev.event_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+            missedDates.push(dateStr);
+        } else {
+            break;
+        }
+    }
+    const targetEvent = allClosedEvents[targetEventIdx];
+    const targetEventDate = new Date(targetEvent.event_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+    return `ขาดเล่นก๊วนติดต่อกัน ${missedDates.length} ครั้ง หักวันที่ ${targetEventDate} 🏸`;
+}
+
 export default function UserManagementPage() {
     const [users, setUsers] = useState<Profile[]>([]);
     const [loading, setLoading] = useState(true);
@@ -33,6 +63,8 @@ export default function UserManagementPage() {
     const [userDetailHistory, setUserDetailHistory] = useState<any[]>([]);
     const [userDetailMMRHistory, setUserDetailMMRHistory] = useState<any[]>([]);
     const [loadingDetail, setLoadingDetail] = useState(false);
+    const [allClosedEvents, setAllClosedEvents] = useState<{ id: string; event_date: string }[]>([]);
+    const [userDetailRegistrations, setUserDetailRegistrations] = useState<Set<string>>(new Set());
 
     const confirm = useConfirm();
 
@@ -69,6 +101,15 @@ export default function UserManagementPage() {
         } else {
             setUsers(data as Profile[]);
         }
+
+        // Fetch all closed events
+        const { data: closedEvents } = await supabase
+            .from('events')
+            .select('id, event_date')
+            .eq('status', 'closed')
+            .order('event_date', { ascending: true });
+        if (closedEvents) setAllClosedEvents(closedEvents);
+
         setLoading(false);
     }, []);
 
@@ -168,6 +209,15 @@ export default function UserManagementPage() {
             // Fetch MMR history
             const { data: mmrData } = await supabase.from('view_mmr_history').select('*').eq('user_id', user.id).order('change_date', { ascending: false }).limit(10);
             if (mmrData) setUserDetailMMRHistory(mmrData);
+
+            // Fetch registrations for target user
+            const { data: regsData } = await supabase
+                .from('event_players')
+                .select('event_id')
+                .eq('user_id', user.id);
+            if (regsData) {
+                setUserDetailRegistrations(new Set(regsData.map((r: any) => r.event_id)));
+            }
         } catch (err) {
             console.error('Error fetching user details:', err);
             toast.error('ไม่สามารถโหลดข้อมูลสถิติได้');
@@ -558,12 +608,18 @@ export default function UserManagementPage() {
                                                         <div>
                                                             <div className="flex items-center gap-2">
                                                                 <p className="text-[11px] font-black text-gray-900">{h.change > 0 ? '+' : ''}{h.change} แต้ม</p>
-                                                                <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'}`}>
-                                                                    {h.result}
+                                                                <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${
+                                                                    h.reason?.startsWith('absence_penalty:')
+                                                                        ? 'bg-rose-600 text-white'
+                                                                        : h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'
+                                                                }`}>
+                                                                    {h.reason?.startsWith('absence_penalty:') ? 'ขาดก๊วน' : h.result}
                                                                 </span>
                                                             </div>
                                                             <p className="text-[9px] font-medium text-gray-400">
-                                                                {h.event_name || 'Match'} • {new Date(h.change_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
+                                                                {h.reason?.startsWith('absence_penalty:') 
+                                                                    ? formatAbsenceReason(h.reason, allClosedEvents, userDetailRegistrations) 
+                                                                    : (h.event_name || 'Match') + ` • ${new Date(h.change_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}`}
                                                             </p>
                                                         </div>
                                                     </div>

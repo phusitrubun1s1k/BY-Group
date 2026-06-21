@@ -44,9 +44,11 @@ export default function LeaderboardPage() {
     const [myAbsences, setMyAbsences] = useState<number>(0);
     const [loading, setLoading] = useState(true);
     const [activeFilter, setActiveFilter] = useState<FilterKey>('mmr' as any);
-    const [selectedMonth, setSelectedMonth] = useState<string>('all'); // 'all' or 'YYYY-MM'
-    const [availableMonths, setAvailableMonths] = useState<string[]>([]);
-    const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
+    const [selectedSeason, setSelectedSeason] = useState<string>('current'); // 'current' or season_label
+    const [pastSeasons, setPastSeasons] = useState<{ label: string; resetId: string; resetAt: string }[]>([]);
+    const [seasonDropdownOpen, setSeasonDropdownOpen] = useState(false);
+    const [myMmrPenalty, setMyMmrPenalty] = useState<number>(0);
+    const [myHasPlayedSinceReset, setMyHasPlayedSinceReset] = useState<boolean>(true);
     const [showRankLegend, setShowRankLegend] = useState(false);
     const [resetAt, setResetAt] = useState<string | null>(null);
     const [resetLabel, setResetLabel] = useState('');
@@ -59,15 +61,25 @@ export default function LeaderboardPage() {
 
     useEffect(() => {
         loadRankings();
-    }, [selectedMonth]);
+    }, [selectedSeason]);
 
     const loadInitialData = async () => {
         const supabase = createClient();
-        const { data: events } = await supabase.from('events').select('event_date').order('event_date', { ascending: true });
-        if (events) {
-            const months = Array.from(new Set(events.map(e => e.event_date.substring(0, 7))));
-            setAvailableMonths(months);
+
+        // Fetch executed resets as past seasons (นับซีซันตามการกดรีแรงค์)
+        const { data: executedResets } = await supabase
+            .from('rank_reset_schedule')
+            .select('id, reset_at, season_label')
+            .eq('status', 'executed')
+            .order('reset_at', { ascending: true });
+        if (executedResets) {
+            setPastSeasons(executedResets.map(r => ({
+                label: r.season_label,
+                resetId: r.id,
+                resetAt: r.reset_at
+            })));
         }
+
         // Fetch pending rank reset schedule
         const { data: resetData } = await supabase
             .from('rank_reset_schedule')
@@ -107,13 +119,39 @@ export default function LeaderboardPage() {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) setCurrentUserId(user.id);
 
-        let query = supabase.from(selectedMonth === 'all' ? 'view_leaderboard' : 'view_monthly_leaderboard').select('*');
+        // ===== Past Season: ดึงจาก season_history =====
+        if (selectedSeason !== 'current') {
+            const { data: seasonRows } = await supabase
+                .from('season_history')
+                .select('*, profiles:user_id(display_name, skill_level)')
+                .eq('season_label', selectedSeason)
+                .order('final_mmr', { ascending: false });
 
-        if (selectedMonth !== 'all') {
-            query = query.eq('month_key', selectedMonth);
+            const mapped: LeaderboardEntry[] = (seasonRows || []).map((r: any) => ({
+                user_id: r.user_id,
+                display_name: r.profiles?.display_name || 'Unknown',
+                skill_level: r.profiles?.skill_level || '',
+                mmr: r.final_mmr,
+                total_games: r.total_games || 0,
+                total_wins: r.total_wins || 0,
+                total_losses: (r.total_games || 0) - (r.total_wins || 0),
+                total_points: 0,
+                total_spent: 0
+            }));
+
+            setData(mapped);
+            setMyAbsences(0);
+            setMyMmrPenalty(0);
+            if (user) {
+                const me = mapped.find(r => r.user_id === user.id);
+                setMyPersonalData(me || null);
+            }
+            setLoading(false);
+            return;
         }
 
-        const { data: rows, error } = await query;
+        // ===== Current Season: ดึงจาก view_leaderboard =====
+        const { data: rows, error } = await supabase.from('view_leaderboard').select('*');
 
         if (error) {
             console.error('Leaderboard error:', error.message, error.details, error.hint);
@@ -121,58 +159,141 @@ export default function LeaderboardPage() {
             return;
         }
 
-        // Calculate consecutive absences since last reset if overall leaderboard is selected
+        // Calculate absences since last reset
+        // Logic: นับก๊วนที่ขาดติดต่อกันทั้งหมดก่อน (นับย้อนกลับจากล่าสุด)
+        // และตัด MMR -20 ต่อก๊วนที่ขาด ทุกๆ การขาดสะสม 3 ครั้ง (idempotent, ข้ามซีซัน)
         let activeUserAbsences: Record<string, number> = {};
-        if (selectedMonth === 'all') {
-            try {
-                // Fetch the latest executed reset date
-                const { data: resets } = await supabase
-                    .from('rank_reset_schedule')
-                    .select('reset_at')
-                    .eq('status', 'executed')
-                    .order('reset_at', { ascending: false })
-                    .limit(1);
-                const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
+        let appliedPenalties: Record<string, number> = {};
+        let userHasPlayedSinceReset: Record<string, boolean> = {};
+        try {
+            // Fetch the latest executed reset date
+            const { data: resets } = await supabase
+                .from('rank_reset_schedule')
+                .select('reset_at')
+                .eq('status', 'executed')
+                .order('reset_at', { ascending: false })
+                .limit(1);
+            const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
 
-                // Fetch all closed events after this reset date
-                const { data: closedEvents } = await supabase
-                    .from('events')
-                    .select('id, event_date, created_at')
-                    .eq('status', 'closed')
-                    .gt('created_at', resetDate)
-                    .order('created_at', { ascending: true });
+            // ดึง closed events หลังรีแรงค์ล่าสุด (ใช้เช็ค "เล่นครั้งเดียว = safe")
+            const { data: currentSeasonEvents } = await supabase
+                .from('events')
+                .select('id, event_date')
+                .eq('status', 'closed')
+                .gt('event_date', resetDate)
+                .order('event_date', { ascending: true });
 
-                if (closedEvents && closedEvents.length > 0) {
-                    // Fetch all registrations for these events
-                    const { data: registrations } = await supabase
-                        .from('event_players')
-                        .select('user_id, event_id')
-                        .in('event_id', closedEvents.map(e => e.id));
-                    const regSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+            // ดึง closed events ทั้งหมด (ใช้คำนวณ penalty ข้ามซีซัน)
+            const { data: allClosedEvents } = await supabase
+                .from('events')
+                .select('id, event_date')
+                .eq('status', 'closed')
+                .order('event_date', { ascending: true });
 
-                    // Count absences for each user in rows
-                    const userIds = rows?.map(r => r.user_id) || [];
-                    for (const userId of userIds) {
-                        let absences = 0;
-                        for (let j = closedEvents.length - 1; j >= 0; j--) {
-                            if (!regSet.has(`${userId}_${closedEvents[j].id}`)) {
-                                absences++;
-                            } else {
-                                break;
-                            }
+            if (allClosedEvents) {
+                // Fetch all registrations for ALL closed events
+                const { data: registrations } = await supabase
+                    .from('event_players')
+                    .select('user_id, event_id')
+                    .in('event_id', allClosedEvents.map(e => e.id));
+                const regSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+
+                // ดึง absence penalties ที่เคยใช้แล้ว
+                const { data: existingPenalties } = await supabase
+                    .from('mmr_history')
+                    .select('user_id, reason')
+                    .like('reason', 'absence_penalty:%');
+                const penaltySet = new Set(existingPenalties?.map(p => `${p.user_id}_${p.reason}`) || []);
+
+                const allUserIds = rows?.map(r => r.user_id) || [];
+                for (const userId of allUserIds) {
+                    // เช็คว่าเล่นหลังรีแรงค์ล่าสุดไหม (สำหรับเช็คการแสดงตัวใน Leaderboard และ Banner แจ้งเตือน)
+                    const hasPlayedSinceReset = currentSeasonEvents 
+                        ? currentSeasonEvents.some(ev => regSet.has(`${userId}_${ev.id}`))
+                        : false;
+                    userHasPlayedSinceReset[userId] = hasPlayedSinceReset;
+
+                    // ===== นับ consecutive absences ย้อนกลับจาก event ล่าสุด (ข้ามซีซัน) =====
+                    let consecutiveMisses = 0;
+                    for (let i = allClosedEvents.length - 1; i >= 0; i--) {
+                        if (!regSet.has(`${userId}_${allClosedEvents[i].id}`)) {
+                            consecutiveMisses++;
+                        } else {
+                            break; // เจอ event ที่เล่น → หยุดนับ
                         }
-                        activeUserAbsences[userId] = absences;
                     }
+                    activeUserAbsences[userId] = consecutiveMisses;
+
+                    // ===== ตัด MMR -20 ต่อก๊วนที่ขาด (idempotent, ข้ามซีซัน) =====
+                    // เก็บ events ที่ขาดจากล่าสุดย้อนกลับ
+                    const missedEvents: { id: string; event_date: string }[] = [];
+                    for (let i = allClosedEvents.length - 1; i >= 0; i--) {
+                        if (!regSet.has(`${userId}_${allClosedEvents[i].id}`)) {
+                            missedEvents.push(allClosedEvents[i]);
+                        } else {
+                            break;
+                        }
+                    }
+                    missedEvents.reverse(); // เรียงตามเวลาจากเก่า → ใหม่
+
+                    const userRow = rows?.find(r => r.user_id === userId);
+                    let currentMmr = userRow?.mmr || 1000;
+                    let totalPenaltyApplied = 0;
+
+                    for (let i = 0; i < missedEvents.length; i++) {
+                        const ev = missedEvents[i];
+                        const idx = i + 1; // 1-based index from oldest to newest (e.g. 1st, 2nd, 3rd absence)
+
+                        // หักคะแนนเฉพาะครั้งที่ขาดลำดับพหุคูณของ 3 (เช่น ขาดสะสม 3, 6, 9 ครั้ง)
+                        if (idx % 3 !== 0) {
+                            continue;
+                        }
+
+                        const penaltyKey = `${userId}_absence_penalty:${ev.id}`;
+                        if (penaltySet.has(penaltyKey)) {
+                            // Penalty นี้ถูกใช้ไปแล้ว นับรวมเพื่อแสดง
+                            totalPenaltyApplied += 20;
+                            continue;
+                        }
+                        // ยังไม่เคยตัด → ตัดเลย (ถ้า mmr > 1000)
+                        if (currentMmr > 1000) {
+                            const deduction = Math.min(20, currentMmr - 1000);
+                            const newMmr = currentMmr - deduction;
+                            await supabase.from('profiles').update({ mmr: newMmr }).eq('id', userId);
+                            await supabase.from('mmr_history').insert({
+                                user_id: userId,
+                                match_id: null,
+                                old_mmr: currentMmr,
+                                new_mmr: newMmr,
+                                change: -deduction,
+                                reason: `absence_penalty:${ev.id}`
+                            });
+                            await supabase.from('notifications').insert({
+                                user_id: userId,
+                                title: 'คะแนน MMR ถูกหักเนื่องจากขาดก๊วน 🏸',
+                                body: `คะแนนของคุณถูกปรับลดลง ${deduction} แต้ม (คงเหลือ ${newMmr} แต้ม) เนื่องจากไม่มาเล่นก๊วนในวันที่ ${new Date(ev.event_date).toLocaleDateString('th-TH', { dateStyle: 'medium' })}`,
+                                type: 'system',
+                                link_url: '/dashboard/profile'
+                            });
+                            totalPenaltyApplied += deduction;
+                            currentMmr = newMmr;
+                        }
+                    }
+                    appliedPenalties[userId] = totalPenaltyApplied;
                 }
-            } catch (err) {
-                console.error('Error calculating absences on leaderboard:', err);
             }
+        } catch (err) {
+            console.error('Error calculating absences on leaderboard:', err);
         }
 
-        if (user && activeUserAbsences[user.id]) {
-            setMyAbsences(activeUserAbsences[user.id]);
+        if (user) {
+            setMyHasPlayedSinceReset(userHasPlayedSinceReset[user.id] ?? true);
+            setMyAbsences(activeUserAbsences[user.id] || 0);
+            setMyMmrPenalty(appliedPenalties[user.id] || 0);
         } else {
+            setMyHasPlayedSinceReset(true);
             setMyAbsences(0);
+            setMyMmrPenalty(0);
         }
 
         // Fetch badges for these users
@@ -194,7 +315,8 @@ export default function LeaderboardPage() {
         const dataWithAchievements = (rows || [])
             .filter(r => {
                 if (r.total_games <= 0) return false;
-                if (selectedMonth === 'all' && (activeUserAbsences[r.user_id] || 0) >= 3) {
+                // ซ่อนคนที่ไม่เคยมาเล่นเลยหลังรีแรงค์
+                if (!userHasPlayedSinceReset[r.user_id]) {
                     return false;
                 }
                 return true;
@@ -402,27 +524,18 @@ export default function LeaderboardPage() {
                         </div>
                     )}
 
-                    {/* Absence Warning Banner */}
-                    {selectedMonth === 'all' && myAbsences > 0 && (
-                        <div className={`mb-8 p-5 rounded-2xl border flex items-start gap-4 transition-all duration-300 animate-in fade-in slide-in-from-top-4 ${
-                            myAbsences >= 3 
-                                ? 'bg-rose-50 border-rose-200 text-rose-800' 
-                                : 'bg-amber-50 border-amber-200 text-amber-800'
-                        }`}>
-                            <div className={`p-2.5 rounded-xl shrink-0 ${
-                                myAbsences >= 3 ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'
-                            }`}>
-                                <Icon icon={myAbsences >= 3 ? 'solar:danger-bold' : 'solar:bell-bing-bold'} width={22} />
+                    {/* Absence Warning Banner — ขาดก๊วนหลังรีแรงค์ + ตัด MMR */}
+                    {selectedSeason === 'current' && !myHasPlayedSinceReset && myAbsences > 0 && (
+                        <div className="mb-8 p-5 rounded-2xl border flex items-start gap-4 transition-all duration-300 animate-in fade-in slide-in-from-top-4 bg-rose-50 border-rose-200 text-rose-800">
+                            <div className="p-2.5 rounded-xl shrink-0 bg-rose-100 text-rose-600">
+                                <Icon icon="solar:danger-bold" width={22} />
                             </div>
                             <div className="flex-1">
                                 <h3 className="text-sm font-black mb-1">
-                                    {myAbsences >= 3 ? 'คุณถูกระงับการติดอันดับชั่วคราว ❌' : 'แจ้งเตือนการขาดก๊วน 🏸'}
+                                    คุณถูกระงับการติดอันดับชั่วคราว ❌
                                 </h3>
                                 <p className="text-xs font-semibold opacity-90 leading-relaxed">
-                                    {myAbsences >= 3 
-                                        ? `คุณขาดก๊วนติดต่อกันครบ ${myAbsences} ครั้งแล้วหลังจากรีแรงค์ ระบบจึงนำรายชื่อของคุณออกจากตารางอันดับชั่วคราว กรุณาลงก๊วนเล่นแมตช์ในครั้งถัดไปเพื่อกลับเข้าสู่อันดับ`
-                                        : `คุณไม่ได้เข้าร่วมก๊วนติดต่อกัน ${myAbsences} ครั้งแล้วหลังจากรีแรงค์ หากขาดติดต่อกันครบ 3 ครั้ง รายชื่อของคุณจะถูกนำออกจากการติดอันดับชั่วคราว`
-                                    }
+                                    {`คุณยังไม่ได้เข้าร่วมก๊วนเลยตั้งแต่รีแรงค์ (ขาดรวม ${myAbsences} ครั้ง) ระบบตัด MMR ไปแล้ว ${myMmrPenalty} แต้ม (ตัดครั้งละ 20 ต่อก๊วนที่ขาด) กรุณาลงก๊วนเล่นแมตช์เพียงครั้งเดียวเพื่อกลับเข้าสู่อันดับตลอดซีซัน`}
                                 </p>
                             </div>
                         </div>
@@ -450,47 +563,44 @@ export default function LeaderboardPage() {
 
                         <div className="relative">
                             <button
-                                onClick={() => setMonthDropdownOpen(!monthDropdownOpen)}
+                                onClick={() => setSeasonDropdownOpen(!seasonDropdownOpen)}
                                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white border border-gray-200 text-gray-700 hover:border-orange-500 transition-all min-w-[160px] justify-between"
                             >
                                 <div className="flex items-center gap-2">
                                     <Icon icon="solar:medal-bold-duotone" width={18} className="text-orange-500" />
                                     <span>
-                                        {selectedMonth === 'all'
-                                            ? 'ตลอดกาล'
-                                            : `Season ${availableMonths.indexOf(selectedMonth) + 1} (${new Date(selectedMonth + '-01').toLocaleDateString('th-TH', { month: 'short', year: '2-digit' })})`
+                                        {selectedSeason === 'current'
+                                            ? 'ซีซันปัจจุบัน'
+                                            : selectedSeason
                                         }
                                     </span>
                                 </div>
-                                <Icon icon="solar:alt-arrow-down-linear" className={`transition-transform ${monthDropdownOpen ? 'rotate-180' : ''}`} />
+                                <Icon icon="solar:alt-arrow-down-linear" className={`transition-transform ${seasonDropdownOpen ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {monthDropdownOpen && (
+                            {seasonDropdownOpen && (
                                 <div className="absolute right-0 mt-2 w-full min-w-[200px] bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                                     <button
-                                        onClick={() => { setSelectedMonth('all'); setMonthDropdownOpen(false); }}
-                                        className={`w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between ${selectedMonth === 'all' ? 'text-orange-500 bg-orange-50' : 'text-gray-700'}`}
+                                        onClick={() => { setSelectedSeason('current'); setSeasonDropdownOpen(false); }}
+                                        className={`w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between ${selectedSeason === 'current' ? 'text-orange-500 bg-orange-50' : 'text-gray-700'}`}
                                     >
-                                        ตลอดกาล {selectedMonth === 'all' && <Icon icon="solar:check-circle-bold" />}
+                                        ซีซันปัจจุบัน {selectedSeason === 'current' && <Icon icon="solar:check-circle-bold" />}
                                     </button>
-                                    {[...availableMonths].reverse().map((m, idx) => {
-                                        const seasonNum = availableMonths.indexOf(m) + 1;
-                                        return (
-                                            <button
-                                                key={m}
-                                                onClick={() => { setSelectedMonth(m); setMonthDropdownOpen(false); }}
-                                                className={`w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between ${selectedMonth === m ? 'text-orange-500 bg-orange-50' : 'text-gray-700'}`}
-                                            >
-                                                <div className="flex flex-col leading-tight">
-                                                    <span>Season {seasonNum}</span>
-                                                    <span className="text-[10px] font-medium opacity-50">
-                                                        {new Date(m + '-01').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}
-                                                    </span>
-                                                </div>
-                                                {selectedMonth === m && <Icon icon="solar:check-circle-bold" />}
-                                            </button>
-                                        );
-                                    })}
+                                    {[...pastSeasons].reverse().map((s, idx) => (
+                                        <button
+                                            key={s.resetId}
+                                            onClick={() => { setSelectedSeason(s.label); setSeasonDropdownOpen(false); }}
+                                            className={`w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between ${selectedSeason === s.label ? 'text-orange-500 bg-orange-50' : 'text-gray-700'}`}
+                                        >
+                                            <div className="flex flex-col leading-tight">
+                                                <span>{s.label}</span>
+                                                <span className="text-[10px] font-medium opacity-50">
+                                                    {new Date(s.resetAt).toLocaleDateString('th-TH', { dateStyle: 'medium' })}
+                                                </span>
+                                            </div>
+                                            {selectedSeason === s.label && <Icon icon="solar:check-circle-bold" />}
+                                        </button>
+                                    ))}
                                 </div>
                             )}
                         </div>

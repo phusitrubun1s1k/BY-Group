@@ -82,6 +82,38 @@ const crc16 = (data: string) => {
     return crc & 0xFFFF;
 };
 
+function formatAbsenceReason(
+    reason: string, 
+    allClosedEvents: { id: string; event_date: string }[], 
+    userRegistrations: Set<string>
+) {
+    if (!reason?.startsWith('absence_penalty:')) {
+        return 'หักแต้มสะสมเนื่องจากขาดเล่นก๊วน 🏸';
+    }
+    const eventId = reason.split(':')[1];
+    const targetEventIdx = allClosedEvents.findIndex(e => e.id === eventId);
+    if (targetEventIdx === -1) {
+        return 'หักแต้มสะสมเนื่องจากขาดเล่นก๊วน 🏸';
+    }
+
+    // Walk backward to calculate consecutive misses up to targetEvent
+    const missedDates: string[] = [];
+    for (let i = targetEventIdx; i >= 0; i--) {
+        const ev = allClosedEvents[i];
+        if (!userRegistrations.has(ev.id)) {
+            const dateStr = new Date(ev.event_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+            missedDates.push(dateStr);
+        } else {
+            break;
+        }
+    }
+    missedDates.reverse(); // order oldest to newest
+
+    const targetEvent = allClosedEvents[targetEventIdx];
+    const targetEventDate = new Date(targetEvent.event_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+    return `ขาดเล่นก๊วนติดต่อกัน ${missedDates.length} ครั้ง หักวันที่ ${targetEventDate} 🏸`;
+}
+
 interface ProfileViewProps {
     targetUserId: string;
 }
@@ -110,6 +142,8 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
     const [achievements, setAchievements] = useState<AchievementProgress[]>([]);
     const [mmrHistory, setMmrHistory] = useState<MMRHistory[]>([]);
     const [seasonHistory, setSeasonHistory] = useState<{ id: string; season_label: string; final_mmr: number; final_rank_name: string; total_games: number; total_wins: number; created_at: string }[]>([]);
+    const [allClosedEvents, setAllClosedEvents] = useState<{ id: string; event_date: string }[]>([]);
+    const [userRegistrations, setUserRegistrations] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [showQR, setShowQR] = useState(false);
@@ -167,6 +201,23 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             .eq('user_id', targetUserId)
             .order('created_at', { ascending: false });
         if (seasonData) setSeasonHistory(seasonData);
+
+        // Fetch all closed events
+        const { data: eventsData } = await supabase
+            .from('events')
+            .select('id, event_date')
+            .eq('status', 'closed')
+            .order('event_date', { ascending: true });
+        if (eventsData) setAllClosedEvents(eventsData);
+
+        // Fetch event players registration for target user
+        const { data: regsData } = await supabase
+            .from('event_players')
+            .select('event_id')
+            .eq('user_id', targetUserId);
+        if (regsData) {
+            setUserRegistrations(new Set(regsData.map((r: any) => r.event_id)));
+        }
 
         // Only fetch billing for own profile
         if (currentUser?.id === targetUserId) {
@@ -406,8 +457,21 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                                 <div className="flex items-center gap-3">
                                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${h.change > 0 ? 'bg-emerald-50 text-emerald-600' : h.change < 0 ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}><Icon icon={h.change > 0 ? 'solar:trending-up-bold' : h.change < 0 ? 'solar:trending-down-bold' : 'solar:minus-circle-bold'} width={20} /></div>
                                     <div>
-                                        <div className="flex items-center gap-2"><p className="text-xs font-black text-gray-900">{h.change > 0 ? '+' : ''}{h.change} แต้ม</p><span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'}`}>{h.result}</span></div>
-                                        <p className="text-[10px] font-medium text-gray-400">{h.event_name || 'Match'} • {new Date(h.change_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}</p>
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-xs font-black text-gray-900">{h.change > 0 ? '+' : ''}{h.change} แต้ม</p>
+                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
+                                                h.reason?.startsWith('absence_penalty:') 
+                                                    ? 'bg-rose-600 text-white' 
+                                                    : h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'
+                                            }`}>
+                                                {h.reason?.startsWith('absence_penalty:') ? 'ขาดก๊วน' : h.result}
+                                            </span>
+                                        </div>
+                                        <p className="text-[10px] font-medium text-gray-400">
+                                            {h.reason?.startsWith('absence_penalty:') 
+                                                ? formatAbsenceReason(h.reason, allClosedEvents, userRegistrations) 
+                                                : (h.event_name || 'Match') + ` • ${new Date(h.change_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}`}
+                                        </p>
                                     </div>
                                 </div>
                                 <div className="text-right"><p className="text-sm font-black text-gray-900">{h.new_mmr}</p><p className="text-[9px] font-bold text-gray-400 uppercase">Rating</p></div>
