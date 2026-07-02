@@ -123,11 +123,11 @@ export default function LeaderboardPage() {
         if (selectedSeason !== 'current') {
             const { data: seasonRows } = await supabase
                 .from('season_history')
-                .select('*, profiles:user_id(display_name, skill_level)')
+                .select('*, profiles:user_id(display_name, skill_level, is_guest)')
                 .eq('season_label', selectedSeason)
                 .order('final_mmr', { ascending: false });
 
-            const mapped: LeaderboardEntry[] = (seasonRows || []).map((r: any) => ({
+            const mapped: LeaderboardEntry[] = (seasonRows || []).filter((r: any) => !r.profiles?.is_guest).map((r: any) => ({
                 user_id: r.user_id,
                 display_name: r.profiles?.display_name || 'Unknown',
                 skill_level: r.profiles?.skill_level || '',

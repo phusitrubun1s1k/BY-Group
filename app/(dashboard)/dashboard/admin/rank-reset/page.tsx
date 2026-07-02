@@ -60,10 +60,10 @@ export default function AdminRankResetPage() {
         const supabase = createClient();
         const { data } = await supabase
             .from('season_history')
-            .select('*, profiles:user_id(display_name)')
+            .select('*, profiles:user_id(display_name, is_guest)')
             .eq('season_label', seasonLabel)
             .order('final_mmr', { ascending: false });
-        setSeasonRecords((data || []) as SeasonRecord[]);
+        setSeasonRecords(((data || []) as any[]).filter((r: any) => !r.profiles?.is_guest) as SeasonRecord[]);
         setLoadingSeason(false);
     };
 
@@ -146,7 +146,7 @@ export default function AdminRankResetPage() {
         if (!schedule) { toast.error('ไม่พบรายการ'); return; }
 
         // 2. Get all profiles
-        const { data: profiles } = await supabase.from('profiles').select('id, mmr, display_name');
+        const { data: profiles } = await supabase.from('profiles').select('id, mmr, display_name').eq('is_guest', false);
         if (!profiles) { toast.error('ไม่พบข้อมูลผู้เล่น'); return; }
 
         // 3. Get leaderboard stats for snapshot
