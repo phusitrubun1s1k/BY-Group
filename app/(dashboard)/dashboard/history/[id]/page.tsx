@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Icon } from '@iconify/react';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
+import { billedShuttleCount } from '@/src/lib/utils/billing';
 
 export default function EventHistoryPage({ params }: { params: Promise<{ id: string }> }) {
     const [event, setEvent] = useState<Event | null>(null);
@@ -60,9 +61,8 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
             );
 
             myMatches.forEach(m => {
-                if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                    totalShuttleCost += m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
-                }
+                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
             });
 
             const amount = (event.entry_fee || 0) + totalShuttleCost + (p.additional_cost || 0) - (p.discount || 0);
@@ -86,7 +86,7 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
 
     const finishedMatches = matches.filter(m => m.status === 'finished');
     const unfinishedMatches = matches.filter(m => m.status === 'playing' || m.status === 'waiting');
-    const totalShuttlecocks = finishedMatches.reduce((sum: number, m: Match) => sum + (m.shuttlecock_numbers?.length || 0), 0);
+    const totalShuttlecocks = finishedMatches.reduce((sum: number, m: Match) => sum + billedShuttleCount(m.shuttlecock_numbers), 0);
 
 
     const togglePaymentStatus = async (ep: EventPlayer) => {

@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
 import { truncateName } from '@/src/lib/string-utils';
+import { billedShuttleCount } from '@/src/lib/utils/billing';
 
 
 interface PlayerBill {
@@ -102,25 +103,25 @@ export default function AdminBillingPage() {
                     .from('match_players')
                     .select('*, matches!inner(id, event_id, status, shuttlecock_numbers)');
 
-                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[] }> = {};
+                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[]; billedShuttles: number }> = {};
                 if (allMP) {
                     allMP.forEach(mp => {
                         const mStatus = mp.matches?.status;
                         if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                         const key = `${mp.user_id}_${mp.matches.event_id}`;
-                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [] };
+                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [], billedShuttles: 0 };
 
                         matchDetails[key].gamesPlayed += 1;
                         const matchObj = Array.isArray(mp.matches) ? mp.matches[0] : mp.matches;
-                        if (matchObj?.shuttlecock_numbers) {
-                            const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
-                            matchDetails[key].shuttlecocks.push(...nums);
-                        }
+                        const nums = (matchObj?.shuttlecock_numbers || []).map((s: string) => s.trim()).filter(Boolean);
+                        matchDetails[key].shuttlecocks.push(...nums);
+                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                        matchDetails[key].billedShuttles += billedShuttleCount(nums);
                     });
                 }
 
-                const userSummary: Record<string, PlayerBill & { totalOwed: number, totalPaid: number, shuttlecocks: string[] }> = {};
+                const userSummary: Record<string, PlayerBill & { totalOwed: number, totalPaid: number, shuttlecocks: string[], billedShuttles: number }> = {};
                 for (const ep of allEP as any[]) {
                     const eventDate = ep.events?.event_date;
                     if (selectedMonth !== 'all' && eventDate && !eventDate.startsWith(selectedMonth)) continue;
@@ -128,14 +129,14 @@ export default function AdminBillingPage() {
                     const uid = ep.user_id;
                     const event = ep.events;
                     const eventId = event?.id;
-                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [] };
+                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [], billedShuttles: 0 };
 
-                    // Cost: entry_fee + (shuttlecock_count × price) + additional_cost - discount
-                    const amount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length) + (ep.additional_cost || 0) - (ep.discount || 0);
+                    // Cost: entry_fee + (billed shuttlecocks × price) + additional_cost - discount
+                    const amount = Math.max(0, (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.billedShuttles) + (ep.additional_cost || 0) - (ep.discount || 0));
 
                     const billKey = `${uid}_${eventId}`; // Keep separate bill per event per user
 
-                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length);
+                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.billedShuttles);
 
                     if (!userSummary[billKey]) {
                         userSummary[billKey] = {
@@ -151,6 +152,7 @@ export default function AdminBillingPage() {
                             paymentMethod: ep.payment_method,
                             slipUrl: ep.slip_url,
                             shuttlecocks: [],
+                            billedShuttles: 0,
                             additionalCost: 0,
                             discount: 0,
                             eventDate: eventDate
@@ -163,6 +165,7 @@ export default function AdminBillingPage() {
                     userSummary[billKey].baseAmount = (userSummary[billKey].baseAmount || 0) + baseAmount;
                     userSummary[billKey].totalOwed += amount;
                     userSummary[billKey].shuttlecocks.push(...detail.shuttlecocks);
+                    userSummary[billKey].billedShuttles += detail.billedShuttles;
 
                     if (ep.payment_status === 'pending') {
                         userSummary[billKey].amount += amount;
@@ -174,7 +177,7 @@ export default function AdminBillingPage() {
                 const aggregatedBills = Object.values(userSummary).map(u => {
                     return {
                         ...u,
-                        shuttlecockCount: u.shuttlecocks.length,
+                        shuttlecockCount: u.billedShuttles,
                         shuttlecockNums: u.shuttlecocks.join(', ')
                     };
                 }).filter(b => b.totalOwed > 0 || b.gamesPlayed > 0);
@@ -202,7 +205,7 @@ export default function AdminBillingPage() {
                     .select('user_id, matches!inner(id, status, shuttlecock_numbers)')
                     .eq('matches.event_id', selectedEventId);
 
-                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[] }> = {};
+                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[]; billedShuttles: number }> = {};
                 (matchData || []).forEach(m => {
                     const matchArr = Array.isArray(m.matches) ? m.matches : [m.matches];
                     const matchObj = matchArr[0];
@@ -212,19 +215,19 @@ export default function AdminBillingPage() {
                     if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                     const uid = m.user_id;
-                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [] };
+                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [], billedShuttles: 0 };
 
                     userMatchDetails[uid].games += 1;
-                    if (matchObj?.shuttlecock_numbers) {
-                        const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
-                        userMatchDetails[uid].shuttlecocks.push(...nums);
-                    }
+                    const nums = (matchObj?.shuttlecock_numbers || []).map((s: string) => s.trim()).filter(Boolean);
+                    userMatchDetails[uid].shuttlecocks.push(...nums);
+                    // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                    userMatchDetails[uid].billedShuttles += billedShuttleCount(nums);
                 });
 
                 const playerBills: PlayerBill[] = (eventPlayers as any[]).map(ep => {
-                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [] };
-                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.shuttlecocks.length);
-                    const amount = baseAmount + (ep.additional_cost || 0) - (ep.discount || 0);
+                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [], billedShuttles: 0 };
+                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.billedShuttles);
+                    const amount = Math.max(0, baseAmount + (ep.additional_cost || 0) - (ep.discount || 0));
                     return {
                         eventPlayerId: ep.id,
                         userId: ep.user_id,
@@ -235,7 +238,7 @@ export default function AdminBillingPage() {
                         paymentStatus: ep.payment_status,
                         paymentMethod: ep.payment_method,
                         slipUrl: ep.slip_url,
-                        shuttlecockCount: detail.shuttlecocks.length,
+                        shuttlecockCount: detail.billedShuttles,
                         shuttlecockNums: detail.shuttlecocks.join(', '),
                         additionalCost: ep.additional_cost || 0,
                         discount: ep.discount || 0
@@ -275,25 +278,25 @@ export default function AdminBillingPage() {
 
             // Count players per match for proportional cost calculation
 
-            const matchDetails: Record<string, { games: number; shuttlecocks: string[] }> = {};
+            const matchDetails: Record<string, { games: number; shuttlecocks: string[]; billedShuttles: number }> = {};
             (mpData || []).forEach(mp => {
                 const mStatus = mp.matches?.status;
                 if (mStatus !== 'finished' && mStatus !== 'playing') return;
 
                 const eid = mp.matches.event_id;
-                if (!matchDetails[eid]) matchDetails[eid] = { games: 0, shuttlecocks: [] };
+                if (!matchDetails[eid]) matchDetails[eid] = { games: 0, shuttlecocks: [], billedShuttles: 0 };
 
                 matchDetails[eid].games += 1;
                 const matchObj = Array.isArray(mp.matches) ? mp.matches[0] : mp.matches;
-                if (matchObj?.shuttlecock_numbers) {
-                    const nums = matchObj.shuttlecock_numbers.map((s: string) => s.trim()).filter(Boolean);
-                    matchDetails[eid].shuttlecocks.push(...nums);
-                }
+                const nums = (matchObj?.shuttlecock_numbers || []).map((s: string) => s.trim()).filter(Boolean);
+                matchDetails[eid].shuttlecocks.push(...nums);
+                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                matchDetails[eid].billedShuttles += billedShuttleCount(nums);
             });
 
             const history = (epData || []).map((ep: any) => {
-                const detail = matchDetails[ep.event_id] || { games: 0, shuttlecocks: [] };
-                const amount = (ep.events?.entry_fee || 0) + ((ep.events?.shuttlecock_price || 0) * detail.shuttlecocks.length) + (ep.additional_cost || 0) - (ep.discount || 0);
+                const detail = matchDetails[ep.event_id] || { games: 0, shuttlecocks: [], billedShuttles: 0 };
+                const amount = Math.max(0, (ep.events?.entry_fee || 0) + ((ep.events?.shuttlecock_price || 0) * detail.billedShuttles) + (ep.additional_cost || 0) - (ep.discount || 0));
 
                 return {
                     id: ep.id,
@@ -304,7 +307,7 @@ export default function AdminBillingPage() {
                     paymentMethod: ep.payment_method,
                     slipUrl: ep.slip_url,
                     games: detail.games,
-                    shuttlecockCount: detail.shuttlecocks.length,
+                    shuttlecockCount: detail.billedShuttles,
                     shuttlecockNums: detail.shuttlecocks.join(', ')
                 };
             });

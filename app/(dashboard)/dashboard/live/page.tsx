@@ -6,6 +6,7 @@ import type { Event, Match, Profile, EventPlayer } from '@/src/types';
 import { Icon } from '@iconify/react';
 import Link from 'next/link';
 import { truncateName } from '@/src/lib/string-utils';
+import { billedShuttleCount } from '@/src/lib/utils/billing';
 
 
 export default function LiveBoardPage() {
@@ -42,10 +43,10 @@ export default function LiveBoardPage() {
                     let totalShuttles = 0;
 
                     myFinishedMatches.forEach(m => {
-                        if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                            totalShuttles += m.shuttlecock_numbers.length;
-                            totalShuttleCost += m.shuttlecock_numbers.length * currentShuttlecockPrice;
-                        }
+                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                        const billed = billedShuttleCount(m.shuttlecock_numbers);
+                        totalShuttles += billed;
+                        totalShuttleCost += billed * currentShuttlecockPrice;
                     });
 
                     const myEp = (playersRes.data as EventPlayer[]).find(ep => ep.user_id === userId);

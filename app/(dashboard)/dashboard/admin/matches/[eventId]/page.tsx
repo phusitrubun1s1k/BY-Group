@@ -12,6 +12,7 @@ import RankBadge from '@/src/components/RankBadge';
 import { getRankFromMMR } from '@/src/lib/rank-utils';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import { truncateName } from '@/src/lib/string-utils';
+import { billedShuttleCount } from '@/src/lib/utils/billing';
 
 const GUEST_SKILL_OPTIONS: SelectOption[] = [
     { value: '', label: '-- เลือกระดับ --', icon: 'solar:question-circle-linear' },
@@ -117,9 +118,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             );
 
             myMatches.forEach(m => {
-                if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                    totalShuttleCost += m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
-                }
+                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
             });
 
             const amount = (event.entry_fee || 0) + totalShuttleCost + (p.additional_cost || 0) - (p.discount || 0);
@@ -1587,9 +1587,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         (m.status === 'finished' || m.status === 'playing') &&
                                                         m.match_players?.some(mp => mp.user_id === ep.user_id)
                                                     ).forEach(m => {
-                                                        if (m.shuttlecock_numbers && m.shuttlecock_numbers.length > 0) {
-                                                            totalShuttleCost += m.shuttlecock_numbers.length * (event.shuttlecock_price || 0);
-                                                        }
+                                                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                                                        totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
                                                     });
                                                     return (event.entry_fee || 0) + totalShuttleCost + (ep.additional_cost || 0);
                                                 })();

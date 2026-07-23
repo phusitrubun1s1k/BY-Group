@@ -193,15 +193,8 @@ shuttlecocks_per_event AS (
     mp.user_id,
     m.event_id,
     SUM(
-      CASE 
-        WHEN jsonb_typeof(m.shuttlecock_numbers) = 'array' 
-        THEN (
-          SELECT count(*) 
-          FROM jsonb_array_elements_text(m.shuttlecock_numbers) AS t 
-          WHERE t <> ''
-        )
-        ELSE 0 
-      END
+      -- เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+      GREATEST(1, (SELECT count(*) FROM unnest(m.shuttlecock_numbers) AS t WHERE btrim(t) <> ''))
     ) as shuttlecock_count
   FROM match_players mp
   JOIN matches m ON m.id = mp.match_id
@@ -213,6 +206,7 @@ spending AS (
     ep.user_id,
     SUM(
       e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0))
+        + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0)
     ) as total_spent
   FROM event_players ep
   JOIN events e ON e.id = ep.event_id
@@ -243,15 +237,8 @@ WITH shuttlecocks_per_event AS (
     mp.user_id,
     m.event_id,
     SUM(
-      CASE 
-        WHEN jsonb_typeof(m.shuttlecock_numbers) = 'array' 
-        THEN (
-          SELECT count(*) 
-          FROM jsonb_array_elements_text(m.shuttlecock_numbers) AS t 
-          WHERE t <> ''
-        )
-        ELSE 0 
-      END
+      -- เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+      GREATEST(1, (SELECT count(*) FROM unnest(m.shuttlecock_numbers) AS t WHERE btrim(t) <> ''))
     ) as shuttlecock_count
   FROM match_players mp
   JOIN matches m ON m.id = mp.match_id
@@ -277,10 +264,10 @@ SELECT
   ep.slip_url,
   COALESCE(eg.games_played, 0)::int as total_games,
   COALESCE(spe.shuttlecock_count, 0)::int as total_shuttlecocks,
-  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)))::numeric as total_cost,
-  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)))::numeric as total_amount,
-  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)))::numeric as amount,
-  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)))::numeric as cost
+  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)) + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0))::numeric as total_cost,
+  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)) + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0))::numeric as total_amount,
+  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)) + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0))::numeric as amount,
+  (e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0)) + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0))::numeric as cost
 FROM event_players ep
 JOIN events e ON e.id = ep.event_id
 LEFT JOIN shuttlecocks_per_event spe ON spe.user_id = ep.user_id AND spe.event_id = ep.event_id
@@ -317,15 +304,8 @@ shuttlecocks_per_month AS (
     mp.user_id,
     to_char(e.event_date, 'YYYY-MM') as month_key,
     SUM(
-      CASE 
-        WHEN jsonb_typeof(m.shuttlecock_numbers) = 'array' 
-        THEN (
-          SELECT count(*) 
-          FROM jsonb_array_elements_text(m.shuttlecock_numbers) AS t 
-          WHERE t <> ''
-        )
-        ELSE 0 
-      END
+      -- เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+      GREATEST(1, (SELECT count(*) FROM unnest(m.shuttlecock_numbers) AS t WHERE btrim(t) <> ''))
     ) as shuttlecock_count
   FROM match_players mp
   JOIN matches m ON m.id = mp.match_id
@@ -339,6 +319,7 @@ monthly_spending AS (
     to_char(e.event_date, 'YYYY-MM') as month_key,
     SUM(
       e.entry_fee + (e.shuttlecock_price * COALESCE(spm.shuttlecock_count, 0))
+        + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0)
     ) as total_spent
   FROM event_players ep
   JOIN events e ON e.id = ep.event_id

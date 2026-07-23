@@ -3,6 +3,7 @@ import type { Event } from '@/src/types';
 import Link from 'next/link';
 import { Icon } from '@iconify/react';
 import DashboardPaymentStatus from '@/src/components/DashboardPaymentStatus';
+import { billedShuttleCount } from '@/src/lib/utils/billing';
 
 export default async function DashboardPage() {
     const supabase = await createClient();
@@ -59,9 +60,8 @@ export default async function DashboardPage() {
                     const { data: todayMatches } = await supabase.from('match_players').select('*, matches!inner(*)').eq('user_id', user!.id).eq('matches.event_id', todayEvent.id).in('matches.status', ['finished', 'playing']);
                     let totalShuttles = 0;
                     todayMatches?.forEach((mp: any) => {
-                        if (mp.matches && mp.matches.shuttlecock_numbers) {
-                            totalShuttles += mp.matches.shuttlecock_numbers.length;
-                        }
+                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+                        totalShuttles += billedShuttleCount(mp.matches?.shuttlecock_numbers);
                     });
                     todayBillAmount = todayEvent.entry_fee + (todayEvent.shuttlecock_price * totalShuttles) + (myPlayer.additional_cost || 0) - (myPlayer.discount || 0);
                     todayBillAmount = Math.max(0, todayBillAmount);

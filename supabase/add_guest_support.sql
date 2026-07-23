@@ -51,15 +51,8 @@ shuttlecocks_per_event AS (
     mp.user_id,
     m.event_id,
     SUM(
-      CASE 
-        WHEN jsonb_typeof(m.shuttlecock_numbers) = 'array' 
-        THEN (
-          SELECT count(*) 
-          FROM jsonb_array_elements_text(m.shuttlecock_numbers) AS t 
-          WHERE t <> ''
-        )
-        ELSE 0 
-      END
+      -- เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
+      GREATEST(1, (SELECT count(*) FROM unnest(m.shuttlecock_numbers) AS t WHERE btrim(t) <> ''))
     ) as shuttlecock_count
   FROM match_players mp
   JOIN matches m ON m.id = mp.match_id
@@ -71,6 +64,7 @@ spending AS (
     ep.user_id,
     SUM(
       e.entry_fee + (e.shuttlecock_price * COALESCE(spe.shuttlecock_count, 0))
+        + COALESCE(ep.additional_cost, 0) - COALESCE(ep.discount, 0)
     ) as total_spent
   FROM event_players ep
   JOIN events e ON e.id = ep.event_id
