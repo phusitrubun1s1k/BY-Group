@@ -390,19 +390,30 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (teamA.length !== 2 || teamB.length !== 2) { toast.error('เลือกผู้เล่นทีมละ 2 คน'); return; }
         if (!courtNumber) { toast.error('ระบุหมายเลขคอร์ท'); return; }
 
-        const title = editingMatchId ? 'บันทึกการแก้ไข?' : 'สร้างแมตช์?';
-        const msg = editingMatchId ? 'ยืนยันการแก้ไขข้อมูลแมตช์ที่ยังไม่เริ่มนี้?' : `ยืนยันการสร้างแมตช์ที่คอร์ท ${courtNumber}?`;
-
         const shuttleVal = shuttlecockNumber.trim();
         if (shuttleVal && allUsedShuttlecocks.has(shuttleVal)) {
             toast.error(`ลูกแบดหมายเลข ${shuttleVal} ถูกใช้ไปแล้วในก๊วนนี้`);
             return;
         }
 
+        // เช็คช่องที่ยังไม่ได้กรอก (ไม่บังคับ แต่เตือนกันข้อมูล/การคิดเงินคลาดเคลื่อน)
+        const missing: string[] = [];
+        if (!shuttleVal) missing.push('หมายเลขลูก');
+        if (!matchSeq.trim()) missing.push('ลำดับแมตช์');
+
+        const title = editingMatchId ? 'บันทึกการแก้ไข?' : 'สร้างแมตช์?';
+        let msg = editingMatchId ? 'ยืนยันการแก้ไขข้อมูลแมตช์ที่ยังไม่เริ่มนี้?' : `ยืนยันการสร้างแมตช์ที่คอร์ท ${courtNumber}?`;
+        let type: 'info' | 'warning' = 'info';
+        if (missing.length > 0) {
+            type = 'warning';
+            const shuttleNote = !shuttleVal ? ' (ถ้าไม่ใส่เลขลูก ระบบจะคิดค่าลูกให้เกมนี้ 1 ลูก — เพิ่มภายหลังได้ที่ปุ่ม "+ ลูกแบด")' : '';
+            msg = `ยังไม่ได้กรอก: ${missing.join(', ')}${shuttleNote} — ต้องการ${editingMatchId ? 'บันทึก' : 'สร้างแมตช์'}ต่อหรือไม่?`;
+        }
+
         const ok = await confirm({
             title,
             message: msg,
-            type: 'info',
+            type,
             confirmText: editingMatchId ? 'บันทึก' : 'ยืนยันสร้าง'
         });
         if (!ok) return;
@@ -764,16 +775,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 </div>
                             )}
 
-                                                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100" title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100" title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
                                 <Icon icon="solar:wallet-money-linear" width={16} className="text-green-500" />
                                 <span className="text-xs font-semibold text-green-700">
-                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()} <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} | สด ฿{cashTotal.toLocaleString()})</span>
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100">
-                                <Icon icon="solar:calculator-linear" width={16} className="text-blue-500" />
-                                <span className="text-xs font-semibold text-blue-700">
-                                    ยอดทั้งหมด ฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}
+                                    เก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()}
+                                    <span className="text-gray-400 mx-1">/</span>
+                                    <span className="text-blue-700">฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}</span>
+                                    <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} · สด ฿{cashTotal.toLocaleString()})</span>
                                 </span>
                             </div>
 
@@ -902,8 +910,22 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         <input type="number" className="form-input form-input-plain h-[42px]" placeholder="เช่น 1, 2..." value={matchSeq} onChange={(e) => setMatchSeq(e.target.value)} />
                                     </div>
                                     <div className="form-group md:col-span-1 col-span-2" style={{ marginBottom: 0 }}>
-                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">หมายเลขลูก</label>
-                                        <input className="form-input form-input-plain h-[42px]" placeholder="ระบุเบอร์ลูก..." value={shuttlecockNumber} onChange={(e) => setShuttlecockNumber(e.target.value)} />
+                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">
+                                            หมายเลขลูก
+                                            {!shuttlecockNumber.trim() && (
+                                                <span className="normal-case font-semibold ml-1" style={{ color: 'var(--warning)' }}>• ยังไม่ได้กรอก</span>
+                                            )}
+                                        </label>
+                                        <input
+                                            className="form-input form-input-plain h-[42px]"
+                                            placeholder="ระบุเบอร์ลูก..."
+                                            value={shuttlecockNumber}
+                                            onChange={(e) => setShuttlecockNumber(e.target.value)}
+                                            style={!shuttlecockNumber.trim() ? { borderColor: 'var(--warning)', background: 'rgba(245,158,11,0.05)' } : undefined}
+                                        />
+                                        {!shuttlecockNumber.trim() && (
+                                            <p className="text-[10px] mt-1" style={{ color: 'var(--warning)' }}>มีผลต่อการคิดค่าลูก</p>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="flex gap-2">

@@ -638,13 +638,12 @@ export default function AdminBillingPage() {
                         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                             {/* Table Header */}
                             <div className="hidden sm:grid grid-cols-12 gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider" style={{ background: 'var(--gray-50)', color: 'var(--gray-500)', borderBottom: '1px solid var(--gray-200)' }}>
-                                <div className="col-span-3">ผู้เล่น</div>
+                                <div className="col-span-4">ผู้เล่น</div>
                                 <div className="col-span-1 text-center">เกม</div>
                                 <div className="col-span-1 text-center">ยอดปกติ</div>
-                                <div className="col-span-1 text-center">เพิ่ม</div>
-                                <div className="col-span-1 text-center">ลด</div>
-                                <div className="col-span-1 text-center">{selectedEventId === 'all' ? 'ยอดรวม' : 'ยอดจ่าย'}</div>
-                                <div className="col-span-1 text-center">{selectedEventId === 'all' ? 'ค้าง' : 'เงิน'}</div>
+                                <div className="col-span-1 text-center">ปรับ</div>
+                                <div className="col-span-1 text-center">ยอดรวม</div>
+                                <div className="col-span-1 text-center">ค้างชำระ</div>
                                 <div className="col-span-1 text-center">สถานะ</div>
                                 <div className="col-span-2 text-center">จัดการ</div>
                             </div>
@@ -653,6 +652,8 @@ export default function AdminBillingPage() {
                             {paginatedBills.map((bill, index) => {
                                 // For pagination, we need to base the "show date header" logic on the paginated array
                                 const showDateHeader = selectedEventId === 'all' && bill.eventDate && (index === 0 || bill.eventDate !== paginatedBills[index - 1].eventDate);
+                                // ยอดค้างจริง: all-view = ยอดค้างสะสม, daily-view = จ่ายแล้วถือเป็น 0
+                                const pendingAmount = selectedEventId === 'all' ? bill.amount : (bill.paymentStatus === 'paid' ? 0 : bill.amount);
                                 return (
                                     <React.Fragment key={bill.userId + (bill.eventPlayerId || index)}>
                                         {showDateHeader && (
@@ -671,7 +672,7 @@ export default function AdminBillingPage() {
                                             }}
                                         >
                                             {/* Player */}
-                                            <div className="sm:col-span-3 flex items-center gap-3">
+                                            <div className="sm:col-span-4 flex items-center gap-3">
                                                 <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: 'var(--gray-900)', color: 'var(--white)' }}>
                                                     {bill.displayName.charAt(0).toUpperCase()}
                                                 </div>
@@ -680,7 +681,7 @@ export default function AdminBillingPage() {
                                                         {truncateName(bill.displayName, 16)}
                                                     </p>
                                                     <p className="text-[11px] sm:hidden" style={{ color: 'var(--gray-500)' }}>
-                                                        {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''}{(bill.additionalCost || 0) > 0 ? ` · +฿${bill.additionalCost}` : ''} · ค้าง ฿{bill.amount.toFixed(0)}
+                                                        {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''}{(bill.additionalCost || 0) > 0 ? ` · +฿${bill.additionalCost}` : ''} · ค้าง ฿{pendingAmount.toFixed(0)}
                                                     </p>
                                                 </div>
                                             </div>
@@ -698,20 +699,15 @@ export default function AdminBillingPage() {
                                                 <span className="text-sm font-medium" style={{ color: 'var(--gray-700)' }}>฿{(bill.baseAmount || 0).toFixed(0)}</span>
                                             </div>
 
-                                            {/* Additional Cost */}
-                                            <div className="hidden sm:flex col-span-1 justify-center">
-                                                {(bill.additionalCost || 0) > 0 ? (
-                                                    <span className="text-sm font-bold" style={{ color: '#ef4444' }}>+฿{bill.additionalCost}</span>
-                                                ) : (
-                                                    <span className="text-sm" style={{ color: 'var(--gray-300)' }}>-</span>
+                                            {/* Adjustments (เพิ่ม / ลด) รวมเป็นคอลัมน์เดียว */}
+                                            <div className="hidden sm:flex flex-col col-span-1 items-center justify-center leading-tight gap-0.5">
+                                                {(bill.additionalCost || 0) > 0 && (
+                                                    <span className="text-xs font-bold" style={{ color: 'var(--danger)' }}>+฿{bill.additionalCost}</span>
                                                 )}
-                                            </div>
-
-                                            {/* Discount */}
-                                            <div className="hidden sm:flex col-span-1 justify-center">
-                                                {(bill.discount || 0) > 0 ? (
-                                                    <span className="text-sm font-bold" style={{ color: '#7c3aed' }}>-฿{bill.discount}</span>
-                                                ) : (
+                                                {(bill.discount || 0) > 0 && (
+                                                    <span className="text-xs font-bold" style={{ color: 'var(--violet)' }}>-฿{bill.discount}</span>
+                                                )}
+                                                {!(bill.additionalCost || 0) && !(bill.discount || 0) && (
                                                     <span className="text-sm" style={{ color: 'var(--gray-300)' }}>-</span>
                                                 )}
                                             </div>
@@ -723,10 +719,10 @@ export default function AdminBillingPage() {
                                                 </span>
                                             </div>
 
-                                            {/* Amount (All view: Current Pending) */}
+                                            {/* ค้างชำระ (จ่ายแล้ว = 0) */}
                                             <div className="hidden sm:flex col-span-1 justify-center">
-                                                <span className="text-sm font-bold" style={{ color: bill.amount > 0 ? 'var(--danger)' : 'var(--success)' }}>
-                                                    ฿{bill.amount.toFixed(0)}
+                                                <span className="text-sm font-bold" style={{ color: pendingAmount > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                                                    ฿{pendingAmount.toFixed(0)}
                                                 </span>
                                             </div>
 

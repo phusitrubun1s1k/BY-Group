@@ -55,6 +55,7 @@
   --success: #16a34a;
   --warning: #d97706;
   --danger: #dc2626;
+  --violet: #7c3aed; /* ใช้กับส่วนลด (discount) */
 }
 
 /* ============================================================
@@ -186,6 +187,12 @@
     padding: 6px 14px;
     font-size: 13px;
     border-radius: 8px;
+  }
+
+  /* บนอุปกรณ์สัมผัส เพิ่มขนาดปุ่มเล็กให้กดง่ายขึ้น (desktop คงเดิม) */
+  @media (pointer: coarse) {
+    .btn-sm { min-height: 40px; }
+    .btn-ghost { min-height: 40px; }
   }
 
   /* ---- Form Controls ---- */

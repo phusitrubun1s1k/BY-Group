@@ -27,6 +27,7 @@ export default async function DashboardPage() {
     let myPlayer = null;
     let todayBillAmount = 0;
     let myMatchCount = 0;
+    let todayShuttles = 0;
 
     if (todayEvent) {
         const { count } = await supabase
@@ -56,6 +57,7 @@ export default async function DashboardPage() {
 
                 if (summary) {
                     todayBillAmount = summary.total_cost || summary.total_amount || summary.amount || summary.cost || 0;
+                    todayShuttles = summary.total_shuttlecocks || 0;
                 } else {
                     const { data: todayMatches } = await supabase.from('match_players').select('*, matches!inner(*)').eq('user_id', user!.id).eq('matches.event_id', todayEvent.id).in('matches.status', ['finished', 'playing']);
                     let totalShuttles = 0;
@@ -63,6 +65,7 @@ export default async function DashboardPage() {
                         // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
                         totalShuttles += billedShuttleCount(mp.matches?.shuttlecock_numbers);
                     });
+                    todayShuttles = totalShuttles;
                     todayBillAmount = todayEvent.entry_fee + (todayEvent.shuttlecock_price * totalShuttles) + (myPlayer.additional_cost || 0) - (myPlayer.discount || 0);
                     todayBillAmount = Math.max(0, todayBillAmount);
                 }
@@ -126,6 +129,13 @@ export default async function DashboardPage() {
                                             </div>
                                         )}
                                     </div>
+                                    {todayBillAmount > 0 && (
+                                        <p className="text-[11px] text-right leading-snug max-w-[280px]" style={{ color: 'var(--gray-500)' }}>
+                                            ค่าสนาม ฿{event.entry_fee} + ค่าลูก {todayShuttles}×฿{event.shuttlecock_price}
+                                            {(myPlayer.additional_cost || 0) > 0 ? ` + เพิ่ม ฿${myPlayer.additional_cost}` : ''}
+                                            {(myPlayer.discount || 0) > 0 ? ` − ลด ฿${myPlayer.discount}` : ''}
+                                        </p>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold shadow-sm" style={{ background: 'var(--gray-100)', color: 'var(--gray-500)' }}>
