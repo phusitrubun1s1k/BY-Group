@@ -389,31 +389,22 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const saveMatch = async () => {
         if (teamA.length !== 2 || teamB.length !== 2) { toast.error('เลือกผู้เล่นทีมละ 2 คน'); return; }
         if (!courtNumber) { toast.error('ระบุหมายเลขคอร์ท'); return; }
+        if (!matchSeq.trim()) { toast.error('ระบุลำดับแมตช์ก่อน'); return; }
 
         const shuttleVal = shuttlecockNumber.trim();
-        if (shuttleVal && allUsedShuttlecocks.has(shuttleVal)) {
+        if (!shuttleVal) { toast.error('ระบุหมายเลขลูกก่อน'); return; }
+        if (allUsedShuttlecocks.has(shuttleVal)) {
             toast.error(`ลูกแบดหมายเลข ${shuttleVal} ถูกใช้ไปแล้วในก๊วนนี้`);
             return;
         }
 
-        // เช็คช่องที่ยังไม่ได้กรอก (ไม่บังคับ แต่เตือนกันข้อมูล/การคิดเงินคลาดเคลื่อน)
-        const missing: string[] = [];
-        if (!shuttleVal) missing.push('หมายเลขลูก');
-        if (!matchSeq.trim()) missing.push('ลำดับแมตช์');
-
         const title = editingMatchId ? 'บันทึกการแก้ไข?' : 'สร้างแมตช์?';
-        let msg = editingMatchId ? 'ยืนยันการแก้ไขข้อมูลแมตช์ที่ยังไม่เริ่มนี้?' : `ยืนยันการสร้างแมตช์ที่คอร์ท ${courtNumber}?`;
-        let type: 'info' | 'warning' = 'info';
-        if (missing.length > 0) {
-            type = 'warning';
-            const shuttleNote = !shuttleVal ? ' (ถ้าไม่ใส่เลขลูก ระบบจะคิดค่าลูกให้เกมนี้ 1 ลูก — เพิ่มภายหลังได้ที่ปุ่ม "+ ลูกแบด")' : '';
-            msg = `ยังไม่ได้กรอก: ${missing.join(', ')}${shuttleNote} — ต้องการ${editingMatchId ? 'บันทึก' : 'สร้างแมตช์'}ต่อหรือไม่?`;
-        }
+        const msg = editingMatchId ? 'ยืนยันการแก้ไขข้อมูลแมตช์ที่ยังไม่เริ่มนี้?' : `ยืนยันการสร้างแมตช์ที่คอร์ท ${courtNumber}?`;
 
         const ok = await confirm({
             title,
             message: msg,
-            type,
+            type: 'info',
             confirmText: editingMatchId ? 'บันทึก' : 'ยืนยันสร้าง'
         });
         if (!ok) return;
@@ -707,7 +698,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         setEditingMatchId(null);
         setMatchSeq('');
         setShowForm(true);
-        toast.success('สุ่มจับคู่ให้แล้ว! กรุณาระบุคอร์ทและกดสร้าง');
+        toast.success('สุ่มจับคู่ให้แล้ว! กรุณาระบุคอร์ท ลำดับแมตช์ และหมายเลขลูก แล้วกดสร้าง');
     };
 
     const statusCfg: Record<string, { label: string; badge: string }> = {
@@ -906,12 +897,24 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         />
                                     </div>
                                     <div className="form-group" style={{ marginBottom: 0 }}>
-                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">ลำดับแมตช์</label>
-                                        <input type="number" className="form-input form-input-plain h-[42px]" placeholder="เช่น 1, 2..." value={matchSeq} onChange={(e) => setMatchSeq(e.target.value)} />
+                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">
+                                            ลำดับแมตช์ *
+                                            {!matchSeq.trim() && (
+                                                <span className="normal-case font-semibold ml-1" style={{ color: 'var(--warning)' }}>• ยังไม่ได้กรอก</span>
+                                            )}
+                                        </label>
+                                        <input
+                                            type="number"
+                                            className="form-input form-input-plain h-[42px]"
+                                            placeholder="เช่น 1, 2..."
+                                            value={matchSeq}
+                                            onChange={(e) => setMatchSeq(e.target.value)}
+                                            style={!matchSeq.trim() ? { borderColor: 'var(--warning)', background: 'rgba(245,158,11,0.05)' } : undefined}
+                                        />
                                     </div>
                                     <div className="form-group md:col-span-1 col-span-2" style={{ marginBottom: 0 }}>
                                         <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">
-                                            หมายเลขลูก
+                                            หมายเลขลูก *
                                             {!shuttlecockNumber.trim() && (
                                                 <span className="normal-case font-semibold ml-1" style={{ color: 'var(--warning)' }}>• ยังไม่ได้กรอก</span>
                                             )}
