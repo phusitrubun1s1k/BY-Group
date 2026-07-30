@@ -7,6 +7,7 @@ import { Icon } from '@iconify/react';
 import Link from 'next/link';
 import { truncateName } from '@/src/lib/string-utils';
 import { billedShuttleCount } from '@/src/lib/utils/billing';
+import ChampionsPodium from '@/src/components/ChampionsPodium';
 
 
 export default function LiveBoardPage() {
@@ -359,6 +360,9 @@ export default function LiveBoardPage() {
 
             {/* Right Column: Sidebar (4 Cols) */}
             <div className="col-span-1 lg:col-span-4 flex flex-col gap-6">
+                {/* Top 3 Champions */}
+                <ChampionsPodium currentUserId={currentUserId} />
+
                 {/* My Bill Summary */}
                 {myBill && (
                     <div className={`card p-6 border-none shadow-xl transition-all duration-500 animate-in ${eventPlayers.find(ep => ep.user_id === currentUserId)?.payment_status === 'paid'

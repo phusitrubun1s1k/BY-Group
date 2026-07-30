@@ -6,7 +6,6 @@ import { Icon } from '@iconify/react';
 import Link from 'next/link';
 import RankBadge from '@/src/components/RankBadge';
 import { getNextRank, RANK_TIERS } from '@/src/lib/rank-utils';
-import { logActivity } from '@/src/lib/activity-log';
 
 interface Achievement {
     name: string;
@@ -206,108 +205,52 @@ export default function LeaderboardPage() {
                 seasonMatchPlayers?.forEach(mp => playedSinceResetSet.add(mp.user_id));
             }
 
-            // ดึง closed events ทั้งหมด (ใช้คำนวณ penalty ข้ามซีซัน)
-            const { data: allClosedEvents } = await supabase
+            // ===== นับการขาดก๊วน "เฉพาะซีซันปัจจุบัน" (หลังรีแรงค์ล่าสุด) — อ่านอย่างเดียว =====
+            // สำคัญ: หน้า Leaderboard "ไม่ตัด MMR อัตโนมัติ" อีกต่อไป (เดิมตัดย้อนหลังข้ามซีซันทุกครั้งที่เปิดหน้า
+            // ทำให้แต้มทุกคนหาย) การตัดแต้มขาดก๊วนต้องทำผ่านสคริปต์แอดมินโดยเจตนาเท่านั้น
+            const { data: seasonClosedEvents } = await supabase
                 .from('events')
                 .select('id, event_date')
                 .eq('status', 'closed')
+                .gt('event_date', resetDate)
                 .order('event_date', { ascending: true });
 
-            if (allClosedEvents) {
-                // Fetch all registrations for ALL closed events
+            // อ่านยอดโทษที่ "เคยถูกตัดไปแล้ว" ของแต่ละคน (แสดงผลอย่างเดียว ไม่ตัดเพิ่ม)
+            const { data: existingPenalties } = await supabase
+                .from('mmr_history')
+                .select('user_id, change')
+                .like('reason', 'absence_penalty:%');
+            const penaltyByUser: Record<string, number> = {};
+            existingPenalties?.forEach(p => {
+                penaltyByUser[p.user_id] = (penaltyByUser[p.user_id] || 0) + Math.abs(p.change || 0);
+            });
+
+            // registrations เฉพาะ event ในซีซันนี้
+            const seasonEventIds = (seasonClosedEvents || []).map(e => e.id);
+            let seasonRegSet = new Set<string>();
+            if (seasonEventIds.length > 0) {
                 const { data: registrations } = await supabase
                     .from('event_players')
                     .select('user_id, event_id')
-                    .in('event_id', allClosedEvents.map(e => e.id));
-                const regSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+                    .in('event_id', seasonEventIds);
+                seasonRegSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
+            }
 
-                // ดึง absence penalties ที่เคยใช้แล้ว
-                const { data: existingPenalties } = await supabase
-                    .from('mmr_history')
-                    .select('user_id, reason')
-                    .like('reason', 'absence_penalty:%');
-                const penaltySet = new Set(existingPenalties?.map(p => `${p.user_id}_${p.reason}`) || []);
+            const allUserIds = rows?.map(r => r.user_id) || [];
+            for (const userId of allUserIds) {
+                // เล่นแมตช์จบหลังรีแรงค์ล่าสุดไหม → ใช้ทั้งการแสดงตัวใน Leaderboard และ Banner
+                userHasPlayedSinceReset[userId] = playedSinceResetSet.has(userId);
 
-                const allUserIds = rows?.map(r => r.user_id) || [];
-                for (const userId of allUserIds) {
-                    // เช็คว่าเล่นแมตช์จบหลังรีแรงค์ล่าสุดไหม (สำหรับการแสดงตัวใน Leaderboard และ Banner แจ้งเตือน)
-                    // ใช้ผลแมตช์ที่ finished แล้ว → พอกดคำนวณแต้มก็กลับเข้าอันดับทันที ไม่ต้องรอปิดก๊วน
-                    userHasPlayedSinceReset[userId] = playedSinceResetSet.has(userId);
-
-                    // ===== นับ consecutive absences ย้อนกลับจาก event ล่าสุด (ข้ามซีซัน) =====
-                    let consecutiveMisses = 0;
-                    for (let i = allClosedEvents.length - 1; i >= 0; i--) {
-                        if (!regSet.has(`${userId}_${allClosedEvents[i].id}`)) {
-                            consecutiveMisses++;
-                        } else {
-                            break; // เจอ event ที่เล่น → หยุดนับ
-                        }
+                // นับขาดติดต่อกันย้อนจาก event ล่าสุด "เฉพาะซีซันนี้" → หยุดเมื่อเจอ event ที่ลงเล่น
+                let consecutiveMisses = 0;
+                if (seasonClosedEvents) {
+                    for (let i = seasonClosedEvents.length - 1; i >= 0; i--) {
+                        if (!seasonRegSet.has(`${userId}_${seasonClosedEvents[i].id}`)) consecutiveMisses++;
+                        else break;
                     }
-                    activeUserAbsences[userId] = consecutiveMisses;
-
-                    // ===== ตัด MMR -20 ต่อก๊วนที่ขาด (idempotent, ข้ามซีซัน) =====
-                    // เก็บ events ที่ขาดจากล่าสุดย้อนกลับ
-                    const missedEvents: { id: string; event_date: string }[] = [];
-                    for (let i = allClosedEvents.length - 1; i >= 0; i--) {
-                        if (!regSet.has(`${userId}_${allClosedEvents[i].id}`)) {
-                            missedEvents.push(allClosedEvents[i]);
-                        } else {
-                            break;
-                        }
-                    }
-                    missedEvents.reverse(); // เรียงตามเวลาจากเก่า → ใหม่
-
-                    const userRow = rows?.find(r => r.user_id === userId);
-                    let currentMmr = userRow?.mmr || 1000;
-                    let totalPenaltyApplied = 0;
-
-                    for (let i = 0; i < missedEvents.length; i++) {
-                        const ev = missedEvents[i];
-                        const idx = i + 1; // 1-based index from oldest to newest (e.g. 1st, 2nd, 3rd absence)
-
-                        // หักคะแนนเฉพาะครั้งที่ขาดลำดับพหุคูณของ 3 (เช่น ขาดสะสม 3, 6, 9 ครั้ง)
-                        if (idx % 3 !== 0) {
-                            continue;
-                        }
-
-                        const penaltyKey = `${userId}_absence_penalty:${ev.id}`;
-                        if (penaltySet.has(penaltyKey)) {
-                            // Penalty นี้ถูกใช้ไปแล้ว นับรวมเพื่อแสดง
-                            totalPenaltyApplied += 20;
-                            continue;
-                        }
-                        // ยังไม่เคยตัด → ตัดเลย (ถ้า mmr > 1000)
-                        if (currentMmr > 1000) {
-                            const deduction = Math.min(20, currentMmr - 1000);
-                            const newMmr = currentMmr - deduction;
-                            await supabase.from('profiles').update({ mmr: newMmr }).eq('id', userId);
-                            await supabase.from('mmr_history').insert({
-                                user_id: userId,
-                                match_id: null,
-                                old_mmr: currentMmr,
-                                new_mmr: newMmr,
-                                change: -deduction,
-                                reason: `absence_penalty:${ev.id}`
-                            });
-                            await supabase.from('notifications').insert({
-                                user_id: userId,
-                                title: 'คะแนน MMR ถูกหักเนื่องจากขาดก๊วน 🏸',
-                                body: `คะแนนของคุณถูกปรับลดลง ${deduction} แต้ม (คงเหลือ ${newMmr} แต้ม) เนื่องจากไม่มาเล่นก๊วนในวันที่ ${new Date(ev.event_date).toLocaleDateString('th-TH', { dateStyle: 'medium' })}`,
-                                type: 'system',
-                                link_url: '/dashboard/profile'
-                            });
-                            await logActivity({
-                                category: 'rank', action: 'rank.mmr_penalty',
-                                description: `หัก MMR ${deduction} แต้มจาก ${userRow?.display_name ?? 'ผู้เล่น'} (เหลือ ${newMmr}) เหตุขาดก๊วนสะสม`,
-                                targetType: 'user', targetId: userId,
-                                metadata: { deduction, oldMmr: currentMmr, newMmr, eventId: ev.id },
-                            });
-                            totalPenaltyApplied += deduction;
-                            currentMmr = newMmr;
-                        }
-                    }
-                    appliedPenalties[userId] = totalPenaltyApplied;
                 }
+                activeUserAbsences[userId] = consecutiveMisses;
+                appliedPenalties[userId] = penaltyByUser[userId] || 0;
             }
         } catch (err) {
             console.error('Error calculating absences on leaderboard:', err);
@@ -342,8 +285,9 @@ export default function LeaderboardPage() {
         const dataWithAchievements = (rows || [])
             .filter(r => {
                 if (r.total_games <= 0) return false;
-                // ซ่อนคนที่ไม่เคยมาเล่นเลยหลังรีแรงค์
-                if (!userHasPlayedSinceReset[r.user_id]) {
+                // ซ่อนเฉพาะคนที่ "ยังไม่เล่นเลยหลังรีเซ็ต" และ "ขาดครบ 3 ครั้งขึ้นไป"
+                // พอกลับมาเล่นแมตช์ 1 ครั้ง (hasPlayedSinceReset) จะแสดงตลอดซีซัน
+                if (!userHasPlayedSinceReset[r.user_id] && (activeUserAbsences[r.user_id] || 0) >= 3) {
                     return false;
                 }
                 return true;
@@ -561,17 +505,17 @@ export default function LeaderboardPage() {
                     )}
 
                     {/* Absence Warning Banner — ขาดก๊วนหลังรีแรงค์ + ตัด MMR */}
-                    {selectedSeason === 'current' && !myHasPlayedSinceReset && myAbsences > 0 && (
+                    {selectedSeason === 'current' && !myHasPlayedSinceReset && myAbsences >= 3 && (
                         <div className="mb-8 p-5 rounded-2xl border flex items-start gap-4 transition-all duration-300 animate-in fade-in slide-in-from-top-4 bg-rose-50 border-rose-200 text-rose-800">
                             <div className="p-2.5 rounded-xl shrink-0 bg-rose-100 text-rose-600">
                                 <Icon icon="solar:danger-bold" width={22} />
                             </div>
                             <div className="flex-1">
                                 <h3 className="text-sm font-black mb-1">
-                                    คุณถูกระงับการติดอันดับชั่วคราว ❌
+                                    คุณยังไม่กลับเข้าอันดับ ❌
                                 </h3>
                                 <p className="text-xs font-semibold opacity-90 leading-relaxed">
-                                    {`คุณยังไม่ได้เข้าร่วมก๊วนเลยตั้งแต่รีแรงค์ (ขาดรวม ${myAbsences} ครั้ง) ระบบตัด MMR ไปแล้ว ${myMmrPenalty} แต้ม (ตัดครั้งละ 20 ต่อก๊วนที่ขาด) กรุณาลงก๊วนเล่นแมตช์เพียงครั้งเดียวเพื่อกลับเข้าสู่อันดับตลอดซีซัน`}
+                                    {`คุณยังไม่ได้ลงเล่นแมตช์เลยตั้งแต่รีแรงค์ (ขาด ${myAbsences} ครั้ง) กรุณาลงเล่นแมตช์เพียงครั้งเดียวเพื่อกลับเข้าสู่อันดับตลอดซีซัน${myMmrPenalty > 0 ? ` (ก่อนหน้านี้เคยถูกตัด MMR ไป ${myMmrPenalty} แต้ม)` : ''}`}
                                 </p>
                             </div>
                         </div>
@@ -816,49 +760,49 @@ interface PodiumCardProps {
 
 const podiumConfig = {
     1: {
-        height: 'min-h-[240px] sm:min-h-[280px]',
+        height: 'min-h-[260px] sm:min-h-[300px]',
         avatarSize: 'w-24 h-24 sm:w-28 sm:h-28',
         textSize: 'text-xl sm:text-2xl',
         statSize: 'text-3xl sm:text-4xl',
-        bg: 'linear-gradient(180deg, rgba(251, 191, 36, 0.2) 0%, rgba(251, 191, 36, 0.05) 100%)',
-        border: '2px solid #fbbf24',
+        bg: 'linear-gradient(160deg, #fffbeb 0%, #fef3c7 55%, #fde68a 100%)',
+        border: '2.5px solid #fbbf24',
         crownColor: '#f59e0b',
         badgeBg: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
         badgeColor: '#fff',
         label: '🥇',
         rankTitle: 'อันดับ 1',
         rankColor: 'text-amber-600',
-        shadow: '0 10px 40px rgba(251, 191, 36, 0.3)',
+        shadow: '0 18px 50px rgba(245, 158, 11, 0.45), 0 0 0 1px rgba(251,191,36,0.4)',
     },
     2: {
-        height: 'min-h-[210px] sm:min-h-[240px]',
+        height: 'min-h-[220px] sm:min-h-[250px]',
         avatarSize: 'w-20 h-20 sm:w-24 sm:h-24',
         textSize: 'text-lg sm:text-xl',
         statSize: 'text-2xl sm:text-3xl',
-        bg: 'linear-gradient(180deg, rgba(148, 163, 184, 0.2) 0%, rgba(148, 163, 184, 0.05) 100%)',
-        border: '2px solid #94a3b8',
+        bg: 'linear-gradient(160deg, #f8fafc 0%, #f1f5f9 60%, #e2e8f0 100%)',
+        border: '2.5px solid #cbd5e1',
         crownColor: '#64748b',
         badgeBg: 'linear-gradient(135deg, #cbd5e1, #94a3b8)',
         badgeColor: '#fff',
         label: '🥈',
         rankTitle: 'อันดับ 2',
         rankColor: 'text-slate-600',
-        shadow: '0 8px 30px rgba(148, 163, 184, 0.25)',
+        shadow: '0 12px 34px rgba(148, 163, 184, 0.35)',
     },
     3: {
-        height: 'min-h-[200px] sm:min-h-[230px]',
+        height: 'min-h-[210px] sm:min-h-[240px]',
         avatarSize: 'w-20 h-20 sm:w-24 sm:h-24',
         textSize: 'text-lg sm:text-xl',
         statSize: 'text-2xl sm:text-3xl',
-        bg: 'linear-gradient(180deg, rgba(217, 119, 6, 0.2) 0%, rgba(217, 119, 6, 0.05) 100%)',
-        border: '2px solid #d97706',
-        crownColor: '#92400e',
-        badgeBg: 'linear-gradient(135deg, #fbbf24, #d97706)',
+        bg: 'linear-gradient(160deg, #fff7ed 0%, #ffedd5 60%, #fed7aa 100%)',
+        border: '2.5px solid #fdba74',
+        crownColor: '#c2410c',
+        badgeBg: 'linear-gradient(135deg, #fdba74, #d97706)',
         badgeColor: '#fff',
         label: '🥉',
         rankTitle: 'อันดับ 3',
         rankColor: 'text-orange-700',
-        shadow: '0 8px 30px rgba(217, 119, 6, 0.2)',
+        shadow: '0 12px 34px rgba(217, 119, 6, 0.3)',
     },
 };
 
@@ -876,6 +820,23 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
                 padding: '2rem 1rem 1.5rem 1rem',
             }}
         >
+            {/* แสงวิ่ง + มงกุฎ (เฉพาะอันดับ 1) */}
+            {rank === 1 && (
+                <>
+                    <style>{`
+                        @keyframes podiumShine {
+                            0% { transform: translateX(-130%) skewX(-20deg); }
+                            55%, 100% { transform: translateX(240%) skewX(-20deg); }
+                        }
+                    `}</style>
+                    <span
+                        className="absolute top-0 left-0 h-full w-1/3 pointer-events-none z-20"
+                        style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent)', animation: 'podiumShine 3.4s ease-in-out infinite' }}
+                        aria-hidden
+                    />
+                </>
+            )}
+
             {/* Rank Badge */}
             <div
                 className="px-3 py-1 rounded-full text-[10px] font-black uppercase absolute -top-0 left-1/2 -translate-x-1/2 -translate-y-[-12px] shadow-sm z-10"
@@ -891,6 +852,9 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
 
             {/* Avatar Section */}
             <div className="relative mb-4">
+                {rank === 1 && (
+                    <Icon icon="solar:crown-bold" width={30} className="absolute -top-7 left-1/2 -translate-x-1/2 z-20 drop-shadow-md animate-bounce" style={{ color: '#f59e0b', animationDuration: '2.4s' }} />
+                )}
                 <div
                     className={`${config.avatarSize} rounded-full flex items-center justify-center font-black shadow-2xl border-4 border-white relative z-0 group-hover:scale-105 transition-transform`}
                     style={{
