@@ -80,8 +80,12 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         setClosing(true);
         const supabase = createClient();
         await supabase.from('events').update({ status: 'closed' }).eq('id', eventId);
-        
+
         try {
+            // 0. ล้างการแจ้งเตือนทั้งหมดของทุกคน (เคลียร์สเลททุกครั้งที่ปิดก๊วน)
+            //    ทำก่อนเสมอ แล้วค่อยส่งแจ้งเตือน "ขาดก๊วน" รอบใหม่ด้านล่าง → เหลือเฉพาะอันใหม่
+            await supabase.from('notifications').delete().not('id', 'is', null);
+
             // 1. Fetch the latest executed reset date
             const { data: resets } = await supabase
                 .from('rank_reset_schedule')
