@@ -6,6 +6,13 @@ import { Icon } from '@iconify/react';
 import Link from 'next/link';
 import RankBadge from '@/src/components/RankBadge';
 import { getNextRank, RANK_TIERS } from '@/src/lib/rank-utils';
+import { logActivity } from '@/src/lib/activity-log';
+
+interface Achievement {
+    name: string;
+    icon: string;
+    type?: string;
+}
 
 interface LeaderboardEntry {
     user_id: string;
@@ -17,7 +24,22 @@ interface LeaderboardEntry {
     total_losses: number;
     total_points: number;
     total_spent: number;
-    achievements?: { name: string; icon: string }[];
+    achievements?: Achievement[];
+}
+
+interface SeasonHistoryRow {
+    user_id: string;
+    final_mmr: number;
+    total_games: number | null;
+    total_wins: number | null;
+    profiles: { display_name: string | null; skill_level: string | null; is_guest: boolean | null } | null;
+}
+
+interface UserBadgeRow {
+    user_id: string;
+    badge_win_streak: boolean | null;
+    badge_marathon: boolean | null;
+    badge_patron: boolean | null;
 }
 
 type FilterKey = 'mmr' | 'total_games' | 'total_wins' | 'total_spent';
@@ -43,7 +65,7 @@ export default function LeaderboardPage() {
     const [myPersonalData, setMyPersonalData] = useState<LeaderboardEntry | null>(null);
     const [myAbsences, setMyAbsences] = useState<number>(0);
     const [loading, setLoading] = useState(true);
-    const [activeFilter, setActiveFilter] = useState<FilterKey>('mmr' as any);
+    const [activeFilter, setActiveFilter] = useState<FilterKey>('mmr');
     const [selectedSeason, setSelectedSeason] = useState<string>('current'); // 'current' or season_label
     const [pastSeasons, setPastSeasons] = useState<{ label: string; resetId: string; resetAt: string }[]>([]);
     const [seasonDropdownOpen, setSeasonDropdownOpen] = useState(false);
@@ -55,15 +77,7 @@ export default function LeaderboardPage() {
     const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    useEffect(() => {
-        loadInitialData();
-    }, []);
-
-    useEffect(() => {
-        loadRankings();
-    }, [selectedSeason]);
-
-    const loadInitialData = async () => {
+    async function loadInitialData() {
         const supabase = createClient();
 
         // Fetch executed resets as past seasons (นับซีซันตามการกดรีแรงค์)
@@ -92,7 +106,7 @@ export default function LeaderboardPage() {
             setResetAt(resetData.reset_at);
             setResetLabel(resetData.season_label);
         }
-    };
+    }
 
     // Countdown timer effect
     useEffect(() => {
@@ -113,7 +127,7 @@ export default function LeaderboardPage() {
         return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [resetAt]);
 
-    const loadRankings = async () => {
+    async function loadRankings() {
         setLoading(true);
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
@@ -127,7 +141,8 @@ export default function LeaderboardPage() {
                 .eq('season_label', selectedSeason)
                 .order('final_mmr', { ascending: false });
 
-            const mapped: LeaderboardEntry[] = (seasonRows || []).filter((r: any) => !r.profiles?.is_guest).map((r: any) => ({
+            const seasonRowsTyped = (seasonRows || []) as unknown as SeasonHistoryRow[];
+            const mapped: LeaderboardEntry[] = seasonRowsTyped.filter(r => !r.profiles?.is_guest).map(r => ({
                 user_id: r.user_id,
                 display_name: r.profiles?.display_name || 'Unknown',
                 skill_level: r.profiles?.skill_level || '',
@@ -162,9 +177,9 @@ export default function LeaderboardPage() {
         // Calculate absences since last reset
         // Logic: นับก๊วนที่ขาดติดต่อกันทั้งหมดก่อน (นับย้อนกลับจากล่าสุด)
         // และตัด MMR -20 ต่อก๊วนที่ขาด ทุกๆ การขาดสะสม 3 ครั้ง (idempotent, ข้ามซีซัน)
-        let activeUserAbsences: Record<string, number> = {};
-        let appliedPenalties: Record<string, number> = {};
-        let userHasPlayedSinceReset: Record<string, boolean> = {};
+        const activeUserAbsences: Record<string, number> = {};
+        const appliedPenalties: Record<string, number> = {};
+        const userHasPlayedSinceReset: Record<string, boolean> = {};
         try {
             // Fetch the latest executed reset date
             const { data: resets } = await supabase
@@ -175,13 +190,21 @@ export default function LeaderboardPage() {
                 .limit(1);
             const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
 
-            // ดึง closed events หลังรีแรงค์ล่าสุด (ใช้เช็ค "เล่นครั้งเดียว = safe")
-            const { data: currentSeasonEvents } = await supabase
-                .from('events')
-                .select('id, event_date')
-                .eq('status', 'closed')
-                .gt('event_date', resetDate)
-                .order('event_date', { ascending: true });
+            // เช็ค "กลับเข้าอันดับทันที": นับจากการเล่นแมตช์ที่จบแล้ว (กดชนะ/แพ้/เสมอ = คำนวณแต้ม)
+            // หลังรีแรงค์ล่าสุด ไม่ต้องรอ admin ปิดก๊วน — พอมีผลแมตช์ก็โผล่กลับมาในอันดับเลย
+            const { data: seasonFinishedMatches } = await supabase
+                .from('matches')
+                .select('id, created_at')
+                .eq('status', 'finished')
+                .gt('created_at', resetDate);
+            const playedSinceResetSet = new Set<string>();
+            if (seasonFinishedMatches && seasonFinishedMatches.length > 0) {
+                const { data: seasonMatchPlayers } = await supabase
+                    .from('match_players')
+                    .select('user_id')
+                    .in('match_id', seasonFinishedMatches.map(m => m.id));
+                seasonMatchPlayers?.forEach(mp => playedSinceResetSet.add(mp.user_id));
+            }
 
             // ดึง closed events ทั้งหมด (ใช้คำนวณ penalty ข้ามซีซัน)
             const { data: allClosedEvents } = await supabase
@@ -207,11 +230,9 @@ export default function LeaderboardPage() {
 
                 const allUserIds = rows?.map(r => r.user_id) || [];
                 for (const userId of allUserIds) {
-                    // เช็คว่าเล่นหลังรีแรงค์ล่าสุดไหม (สำหรับเช็คการแสดงตัวใน Leaderboard และ Banner แจ้งเตือน)
-                    const hasPlayedSinceReset = currentSeasonEvents 
-                        ? currentSeasonEvents.some(ev => regSet.has(`${userId}_${ev.id}`))
-                        : false;
-                    userHasPlayedSinceReset[userId] = hasPlayedSinceReset;
+                    // เช็คว่าเล่นแมตช์จบหลังรีแรงค์ล่าสุดไหม (สำหรับการแสดงตัวใน Leaderboard และ Banner แจ้งเตือน)
+                    // ใช้ผลแมตช์ที่ finished แล้ว → พอกดคำนวณแต้มก็กลับเข้าอันดับทันที ไม่ต้องรอปิดก๊วน
+                    userHasPlayedSinceReset[userId] = playedSinceResetSet.has(userId);
 
                     // ===== นับ consecutive absences ย้อนกลับจาก event ล่าสุด (ข้ามซีซัน) =====
                     let consecutiveMisses = 0;
@@ -275,6 +296,12 @@ export default function LeaderboardPage() {
                                 type: 'system',
                                 link_url: '/dashboard/profile'
                             });
+                            await logActivity({
+                                category: 'rank', action: 'rank.mmr_penalty',
+                                description: `หัก MMR ${deduction} แต้มจาก ${userRow?.display_name ?? 'ผู้เล่น'} (เหลือ ${newMmr}) เหตุขาดก๊วนสะสม`,
+                                targetType: 'user', targetId: userId,
+                                metadata: { deduction, oldMmr: currentMmr, newMmr, eventId: ev.id },
+                            });
                             totalPenaltyApplied += deduction;
                             currentMmr = newMmr;
                         }
@@ -303,9 +330,9 @@ export default function LeaderboardPage() {
             .select('*')
             .in('user_id', userIds);
 
-        const achievementsMap: Record<string, any[]> = {};
-        userBadges?.forEach((ub: any) => {
-            const achs = [];
+        const achievementsMap: Record<string, Achievement[]> = {};
+        ((userBadges || []) as unknown as UserBadgeRow[]).forEach((ub) => {
+            const achs: Achievement[] = [];
             if (ub.badge_win_streak) achs.push({ name: 'ชนะติดต่อกัน 3 เกม', icon: 'solar:fire-bold' });
             if (ub.badge_marathon) achs.push({ name: 'เล่นครบ 100 เกม', icon: 'solar:shuttlecock-bold' });
             if (ub.badge_patron) achs.push({ name: 'สายเปย์ประจำสัปดาห์', icon: 'solar:wallet-money-bold' });
@@ -365,7 +392,16 @@ export default function LeaderboardPage() {
         }
 
         setLoading(false);
-    };
+    }
+
+    // ห่อ loader ใน async IIFE ภายใน effect เพื่อไม่ให้ setState ถูกเรียกแบบ synchronous ใน effect
+    useEffect(() => {
+        void (async () => { await loadInitialData(); })();
+    }, []);
+
+    useEffect(() => {
+        void (async () => { await loadRankings(); })();
+    }, [selectedSeason]);
 
     // Sort data by active filter
     const sorted = [...data]
@@ -679,7 +715,7 @@ export default function LeaderboardPage() {
                                                         </p>
                                                         {isMe && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-600">คุณ</span>}
                                                         <div className="flex items-center gap-1.5 flex-wrap">
-                                                            {entry.achievements?.map((ach: any, i) => {
+                                                            {entry.achievements?.map((ach: Achievement, i: number) => {
                                                                 let colorCls = 'bg-emerald-50 text-emerald-600';
                                                                 if (ach.name === 'ชนะติดต่อกัน 3 เกม') colorCls = 'bg-orange-50 text-orange-600';
                                                                 else if (ach.name === 'เล่นครบ 100 เกม') colorCls = 'bg-blue-50 text-blue-600';
@@ -877,7 +913,7 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
                     {entry.display_name}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1">
-                    {entry.achievements?.map((ach: any, i) => {
+                    {entry.achievements?.map((ach: Achievement, i: number) => {
                         let colorCls = 'bg-emerald-500 text-white border-emerald-400';
                         if (ach.name === 'ชนะติดต่อกัน 3 เกม') colorCls = 'bg-orange-500 text-white border-orange-400';
                         else if (ach.name === 'เล่นครบ 100 เกม') colorCls = 'bg-blue-500 text-white border-blue-400';

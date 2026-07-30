@@ -29,6 +29,7 @@ const adminMenuItems = [
     { href: '/dashboard/admin/users', label: 'จัดการสมาชิก', icon: 'solar:users-group-rounded-linear' },
     { href: '/dashboard/admin/absences', label: 'ประวัติการเข้าก๊วน', icon: 'solar:calendar-date-linear' },
     { href: '/dashboard/admin/rank-reset', label: 'รีแรงค์', icon: 'solar:restart-linear' },
+    { href: '/dashboard/admin/logs', label: 'บันทึกกิจกรรม', icon: 'solar:clipboard-list-linear' },
     { href: '/dashboard/history', label: 'ประวัติก๊วน', icon: 'solar:clock-circle-linear' },
 ];
 

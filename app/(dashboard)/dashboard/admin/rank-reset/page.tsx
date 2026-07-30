@@ -6,6 +6,7 @@ import { Icon } from '@iconify/react';
 import { RANK_TIERS, getRankFromMMR } from '@/src/lib/rank-utils';
 import RankBadge from '@/src/components/RankBadge';
 import toast from 'react-hot-toast';
+import { logActivity } from '@/src/lib/activity-log';
 
 interface ResetSchedule {
     id: string;
@@ -115,6 +116,11 @@ export default function AdminRankResetPage() {
             if (error) {
                 toast.error('ไม่สามารถตั้งเวลาได้: ' + error.message);
             } else {
+                await logActivity({
+                    category: 'rank', action: 'rank.schedule',
+                    description: `ตั้งเวลารีแรงค์ซีซัน "${seasonLabel}" วันที่ ${new Date(resetAt).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}`,
+                    metadata: { seasonLabel, resetAt },
+                });
                 toast.success('ตั้งเวลารีแรงค์สำเร็จ!');
                 setResetDate('');
                 setResetTime('00:00');
@@ -188,12 +194,23 @@ export default function AdminRankResetPage() {
 
         // 6. Mark schedule as executed
         await supabase.from('rank_reset_schedule').update({ status: 'executed' }).eq('id', scheduleId);
+        await logActivity({
+            category: 'rank', action: 'rank.reset_execute',
+            description: `รีแรงค์ซีซัน "${schedule.season_label}" สำเร็จ (รีเซ็ต MMR ผู้เล่น ${profiles.length} คน)`,
+            targetType: 'rank_reset', targetId: scheduleId,
+            metadata: { seasonLabel: schedule.season_label, playerCount: profiles.length },
+        });
         toast.success(`รีแรงค์ ${schedule.season_label} สำเร็จ!`);
     };
 
     const runCancel = async (scheduleId: string) => {
         const supabase = createClient();
         await supabase.from('rank_reset_schedule').update({ status: 'cancelled' }).eq('id', scheduleId);
+        await logActivity({
+            category: 'rank', action: 'rank.reset_cancel',
+            description: 'ยกเลิกการตั้งเวลารีแรงค์',
+            targetType: 'rank_reset', targetId: scheduleId,
+        });
         toast.success('ยกเลิกการตั้งเวลาแล้ว');
     };
 

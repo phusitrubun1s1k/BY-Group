@@ -8,6 +8,7 @@ import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
 import { truncateName } from '@/src/lib/string-utils';
 import { billedShuttleCount } from '@/src/lib/utils/billing';
+import { logActivity } from '@/src/lib/activity-log';
 
 
 interface PlayerBill {
@@ -342,6 +343,12 @@ export default function AdminBillingPage() {
         if (error) {
             toast.error('อัปเดตไม่สำเร็จ');
         } else {
+            await logActivity({
+                category: 'payment', action: 'payment.confirm',
+                description: `รับชำระเงินจาก ${bill.displayName} ฿${bill.amount.toFixed(0)} ด้วย${method === 'cash' ? 'เงินสด' : 'การโอน'}`,
+                targetType: 'user', targetId: bill.userId,
+                metadata: { method, amount: bill.amount },
+            });
             toast.success(`ชำระเงินเรียบร้อยด้วย ${method === 'cash' ? 'เงินสด 💵' : 'โอนเงิน 📱'}`);
             loadBills();
         }
@@ -370,6 +377,12 @@ export default function AdminBillingPage() {
             if (error) {
                 toast.error('อัปเดตไม่สำเร็จ');
             } else {
+                await logActivity({
+                    category: 'payment', action: 'payment.unpay',
+                    description: `ยกเลิกการชำระเงินของ ${bill.displayName} (฿${bill.amount.toFixed(0)})`,
+                    targetType: 'user', targetId: bill.userId,
+                    metadata: { amount: bill.amount },
+                });
                 toast.success('เปลี่ยนสถานะเป็นยังไม่จ่าย');
                 loadBills();
             }

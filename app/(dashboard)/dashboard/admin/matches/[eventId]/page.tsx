@@ -13,6 +13,7 @@ import { getRankFromMMR } from '@/src/lib/rank-utils';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import { truncateName } from '@/src/lib/string-utils';
 import { billedShuttleCount } from '@/src/lib/utils/billing';
+import { logActivity } from '@/src/lib/activity-log';
 
 const GUEST_SKILL_OPTIONS: SelectOption[] = [
     { value: '', label: '-- เลือกระดับ --', icon: 'solar:question-circle-linear' },
@@ -297,7 +298,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         setCreating(true);
         const supabase = createClient();
-        const newNumbers = [...(addingShuttlecockMatch.currentNumbers || []), newShuttlecockNumber];
+        const newNumbers = [...(addingShuttlecockMatch.currentNumbers || []), num];
 
         const { error } = await supabase.from('matches').update({ shuttlecock_numbers: newNumbers }).eq('id', addingShuttlecockMatch.id);
 
@@ -306,7 +307,44 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         if (error) { toast.error('เกิดข้อผิดพลาดในการเบิกลูกแบด'); return; }
 
-        toast.success(`เพิ่มลูกแบดหมายเลข ${newShuttlecockNumber.trim()} สำเร็จ`);
+        await logActivity({
+            category: 'match', action: 'match.shuttle_add',
+            description: `เพิ่มลูกแบดหมายเลข ${num} ในแมตช์`,
+            targetType: 'match', targetId: addingShuttlecockMatch.id, eventId,
+            metadata: { number: num, before: addingShuttlecockMatch.currentNumbers, after: newNumbers },
+        });
+        toast.success(`เพิ่มลูกแบดหมายเลข ${num} สำเร็จ`);
+        loadData(eventId);
+    };
+
+    // ลบหมายเลขลูกออกจากแมตช์ — แต่ต้องเหลือ "ลูกเบส" อย่างน้อย 1 ลูกเสมอ
+    // (ทุกแมตช์ที่เล่นแล้วใช้ลูกขั้นต่ำ 1 ลูก ให้ตรงกับการคิดเงิน max(1, count)) → ลบลูกสุดท้ายไม่ได้
+    const removeShuttlecock = async (matchId: string, idx: number, num: string, currentNumbers: string[]) => {
+        if ((currentNumbers?.length || 0) <= 1) {
+            toast.error('ต้องมีลูกอย่างน้อย 1 ลูก (ลูกเบส) — ลบลูกสุดท้ายไม่ได้');
+            return;
+        }
+
+        const ok = await confirm({
+            title: 'ลบหมายเลขลูก?',
+            message: `ต้องการลบลูกแบดหมายเลข ${num} ออกจากแมตช์นี้ใช่หรือไม่? (มีผลต่อการคิดค่าลูก)`,
+            type: 'warning',
+            confirmText: 'ลบลูกนี้'
+        });
+        if (!ok) return;
+
+        const supabase = createClient();
+        const newNumbers = currentNumbers.filter((_, i) => i !== idx);
+        const { error } = await supabase.from('matches').update({ shuttlecock_numbers: newNumbers }).eq('id', matchId);
+        if (error) { toast.error('เกิดข้อผิดพลาดในการลบลูกแบด'); return; }
+
+        await logActivity({
+            category: 'match', action: 'match.shuttle_remove',
+            description: `ลบลูกแบดหมายเลข ${num} ออกจากแมตช์`,
+            targetType: 'match', targetId: matchId, eventId,
+            metadata: { number: num, before: currentNumbers, after: newNumbers },
+        });
+        toast.success(`ลบลูกแบดหมายเลข ${num} แล้ว`);
         loadData(eventId);
     };
 
@@ -344,6 +382,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         setAddingPlayer(null);
         if (error) { toast.error('ไม่สามารถเพิ่มผู้เล่นได้: ' + error.message); return; }
 
+        const added = unjoinedPlayers.find(p => p.id === userId);
+        await logActivity({
+            category: 'player', action: 'player.add',
+            description: `เพิ่มผู้เล่นสำรอง ${added?.display_name ?? ''} เข้าก๊วน`,
+            targetType: 'user', targetId: userId, eventId,
+        });
         toast.success('เพิ่มผู้เล่นเข้าสู่ก๊วนสำเร็จ');
         setNewPlayerSearch('');
         setUnjoinedPlayers([]);
@@ -370,6 +414,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             return;
         }
 
+        await logActivity({
+            category: 'player', action: 'player.remove',
+            description: `ลบผู้เล่น ${playerName} ออกจากก๊วน`,
+            targetType: 'event_player', targetId: epId, eventId,
+        });
         toast.success(`ลบ ${playerName} ออกจากก๊วนแล้ว`);
     };
 
@@ -427,6 +476,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                     ...teamA.map((uid) => ({ match_id: editingMatchId, user_id: uid, team: 'A' as const })),
                     ...teamB.map((uid) => ({ match_id: editingMatchId, user_id: uid, team: 'B' as const })),
                 ]);
+                await logActivity({
+                    category: 'match', action: 'match.edit',
+                    description: `แก้ไขแมตช์ #${matchSeq} คอร์ท ${courtNumber} (ลูกหมายเลข ${shuttleVal})`,
+                    targetType: 'match', targetId: editingMatchId, eventId,
+                    metadata: { court: courtNumber, matchNumber: matchSeq, shuttles },
+                });
                 toast.success('แก้ไขข้อมูลแมตช์สำเร็จ');
             } else {
                 const { data: match, error } = await supabase.from('matches').insert({
@@ -441,6 +496,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                     ...teamA.map((uid) => ({ match_id: match.id, user_id: uid, team: 'A' as const })),
                     ...teamB.map((uid) => ({ match_id: match.id, user_id: uid, team: 'B' as const })),
                 ]);
+                await logActivity({
+                    category: 'match', action: 'match.create',
+                    description: `สร้างแมตช์ #${matchSeq} คอร์ท ${courtNumber} (ลูกหมายเลข ${shuttleVal})`,
+                    targetType: 'match', targetId: match.id, eventId,
+                    metadata: { court: courtNumber, matchNumber: matchSeq, shuttles },
+                });
                 toast.success('สร้างแมตช์สำเร็จ');
             }
             setShowForm(false); setTeamA([]); setTeamB([]); setCourtNumber(''); setShuttlecockNumber(''); setMatchSeq(''); setEditingMatchId(null);
@@ -504,6 +565,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             return;
         }
 
+        await logActivity({
+            category: 'match', action: 'match.delete',
+            description: `ลบแมตช์ #${m?.match_number ?? '-'} คอร์ท ${m?.court_number ?? '-'}${m?.status === 'finished' ? ' (จบแล้ว)' : ''}`,
+            targetType: 'match', targetId: matchId, eventId,
+            metadata: { court: m?.court_number, matchNumber: m?.match_number, status: m?.status, shuttles: m?.shuttlecock_numbers },
+        });
         toast.success('ลบแมตช์เรียบร้อยแล้ว');
         loadData(eventId);
     };
@@ -517,6 +584,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         });
         if (!ok) return;
 
+        const cancelling = matches.find(x => x.id === matchId);
         const supabase = createClient();
         const { error } = await supabase.from('matches').update({
             status: 'waiting',
@@ -528,6 +596,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             return;
         }
 
+        await logActivity({
+            category: 'match', action: 'match.cancel',
+            description: `ยกเลิกแมตช์ #${cancelling?.match_number ?? '-'} คอร์ท ${cancelling?.court_number ?? '-'} (ย้ายกลับรอคิว + ยกเลิกคิดเงิน)`,
+            targetType: 'match', targetId: matchId, eventId,
+            metadata: { court: cancelling?.court_number, matchNumber: cancelling?.match_number },
+        });
         toast.success('ยกเลิกแมตช์แล้ว');
         loadData(eventId);
     };
@@ -557,6 +631,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             team_b_score: totalB,
         }).eq('id', scoreMatch.id);
 
+        const resultText = isNone ? 'ไม่แจ้งผล' : (isDraw ? 'เสมอ' : `ทีม ${winner} ชนะ`);
+        await logActivity({
+            category: 'match', action: 'match.finish',
+            description: `บันทึกผลแมตช์ #${scoreMatch.match_number ?? '-'} คอร์ท ${scoreMatch.court_number ?? '-'} — ${resultText}`,
+            targetType: 'match', targetId: scoreMatch.id, eventId,
+            metadata: { court: scoreMatch.court_number, matchNumber: scoreMatch.match_number, winner, scoreA: totalA, scoreB: totalB },
+        });
         toast.success(isNone ? 'บันทึกสำเร็จ! (ไม่แจ้งผลแข่ง)' : (isDraw ? 'บันทึกสำเร็จ! เสมอ 🤝' : `บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`));
         setScoreMatch(null);
         loadData(eventId);
@@ -585,6 +666,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             setUpdatingPayment(null);
 
             if (error) { toast.error('อัปเดตไม่สำเร็จ'); return; }
+            await logActivity({
+                category: 'payment', action: 'payment.unpay',
+                description: `ยกเลิกการชำระเงินของ ${prof?.display_name ?? 'ผู้เล่น'}`,
+                targetType: 'user', targetId: ep.user_id, eventId,
+            });
             toast.success('เปลี่ยนสถานะเป็นยังไม่จ่าย');
             loadData(eventId);
         } else {
@@ -608,6 +694,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (error) {
             toast.error('อัปเดตไม่สำเร็จ');
         } else {
+            const prof = ep.profiles as unknown as Profile;
+            await logActivity({
+                category: 'payment', action: 'payment.confirm',
+                description: `รับชำระเงินจาก ${prof?.display_name ?? 'ผู้เล่น'} ด้วย${method === 'cash' ? 'เงินสด' : 'การโอน'}`,
+                targetType: 'user', targetId: ep.user_id, eventId,
+                metadata: { method },
+            });
             toast.success(`ชำระเงินเรียบร้อยด้วย ${method === 'cash' ? 'เงินสด 💵' : 'โอนเงิน 📱'}`);
             loadData(eventId);
         }
@@ -1372,17 +1465,33 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         คอร์ท {match.court_number}
                                                     </span>
                                                     {match.shuttlecock_numbers && match.shuttlecock_numbers.length > 0 && (
-                                                        <div className="flex items-center gap-1">
-                                                            {match.shuttlecock_numbers.map((num, idx) => (
-                                                                <span key={idx} className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold bg-orange-100 text-orange-600 border border-orange-200">
-                                                                    {num}
-                                                                </span>
-                                                            ))}
+                                                        <div className="flex items-center gap-1.5">
+                                                            {match.shuttlecock_numbers.map((num, idx) => {
+                                                                // ลบได้เฉพาะแมตช์ที่กำลังตี/จบแล้ว และต้องเหลือลูกเบสอย่างน้อย 1 ลูก
+                                                                const canDelete = (match.status === 'playing' || match.status === 'finished') && (match.shuttlecock_numbers?.length || 0) > 1;
+                                                                return (
+                                                                    <span key={idx} className="relative inline-flex items-center shrink-0">
+                                                                        <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold bg-orange-100 text-orange-600 border border-orange-200">
+                                                                            {num}
+                                                                        </span>
+                                                                        {canDelete && (
+                                                                            <button
+                                                                                onClick={() => removeShuttlecock(match.id, idx, num, match.shuttlecock_numbers || [])}
+                                                                                className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-sm border border-white transition-colors"
+                                                                                title={`ลบลูกแบดหมายเลข ${num}`}
+                                                                            >
+                                                                                <Icon icon="solar:close-bold" width={8} />
+                                                                            </button>
+                                                                        )}
+                                                                    </span>
+                                                                );
+                                                            })}
                                                         </div>
                                                     )}
-                                                    {/* Add Shuttlecock Button */}
-                                                    {match.status === 'playing' && (
-                                                        <button onClick={() => addShuttlecock(match.id, match.shuttlecock_numbers || [])} className="w-6 h-6 rounded flex items-center justify-center bg-gray-50 border border-gray-200 text-gray-500 hover:text-orange-500 hover:border-orange-200 hover:bg-orange-50 transition-colors shrink-0" title="เบิกลูกแบดเพิ่ม">
+                                                    {/* Add Shuttlecock Button — รองรับทั้งแมตช์ที่กำลังตีและจบแล้ว
+                                                        เพื่อเติมหมายเลขลูกที่ตกหล่นได้โดยไม่ต้องย้อนสถานะ (ซึ่งจะรีเซ็ตสกอร์) */}
+                                                    {(match.status === 'playing' || match.status === 'finished') && (
+                                                        <button onClick={() => addShuttlecock(match.id, match.shuttlecock_numbers || [])} className="w-6 h-6 rounded flex items-center justify-center bg-gray-50 border border-gray-200 text-gray-500 hover:text-orange-500 hover:border-orange-200 hover:bg-orange-50 transition-colors shrink-0" title={match.shuttlecock_numbers && match.shuttlecock_numbers.length > 0 ? 'เบิกลูกแบดเพิ่ม' : 'เพิ่มหมายเลขลูกที่ตกหล่น'}>
                                                             <Icon icon="solar:add-circle-linear" width={16} />
                                                         </button>
                                                     )}
