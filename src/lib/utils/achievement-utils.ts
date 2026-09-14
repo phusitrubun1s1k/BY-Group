@@ -1,6 +1,6 @@
 import { createClient } from '@/src/lib/supabase/client';
 import { ACHIEVEMENTS, AchievementMetadata } from '../constants/achievements';
-import { billedShuttleCount } from './billing';
+import { billedShuttleCount, calculateBill } from './billing';
 
 export interface PlayerStats {
     games_count: number;
@@ -131,7 +131,7 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
     // 4. Calculate total spent
     let total_spent = 0;
     eventPlayers?.forEach(ep => {
-        if (ep.payment_status === 'paid') {
+        if (ep.payment_status === 'paid' || Number(ep.paid_amount) > 0) {
             const event = (ep as any).events;
             if (event) {
                 const eventMatches = matchPlayers?.filter(mp =>
@@ -140,7 +140,7 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
                 ) || [];
                 // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
                 const shuttlesInEvent = eventMatches.reduce((sum, mp) => sum + billedShuttleCount(mp.matches?.shuttlecock_numbers), 0);
-                total_spent += (event.entry_fee || 0) + ((event.shuttlecock_price || 0) * shuttlesInEvent) + (ep.additional_cost || 0) - (ep.discount || 0);
+                total_spent += Number(ep.paid_amount ?? calculateBill(event.entry_fee || 0, event.shuttlecock_price || 0, shuttlesInEvent, ep.additional_cost || 0, ep.discount || 0));
             }
         }
     });
@@ -175,7 +175,10 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
         member_status: profile?.is_guest ? 0 : 1,
         og_member: isOG,
         mvp_votes: 0,
-        lose_count: Math.max(0, games_count - win_count),
+        lose_count: (matchPlayers || []).filter(participant => {
+            const match = participant.matches;
+            return match?.status === 'finished' && (participant.team === 'A' ? match.team_a_score < match.team_b_score : match.team_b_score < match.team_a_score);
+        }).length,
     };
 }
 

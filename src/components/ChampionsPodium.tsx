@@ -91,7 +91,7 @@ export function ChampionFrame({ entry, rank, isMe }: { entry: Champion; rank: 1 
                     {isMe && <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-500 text-white shrink-0">คุณ</span>}
                 </div>
                 <div className="mt-1">
-                    <RankBadge mmr={entry.mmr || 1000} size="sm" showName showMMR={false} />
+                    <RankBadge mmr={entry.mmr ?? 1000} size="sm" showName showMMR={false} />
                 </div>
             </div>
 

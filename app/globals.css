@@ -191,8 +191,10 @@
 
   /* บนอุปกรณ์สัมผัส เพิ่มขนาดปุ่มเล็กให้กดง่ายขึ้น (desktop คงเดิม) */
   @media (pointer: coarse) {
-    .btn-sm { min-height: 40px; }
-    .btn-ghost { min-height: 40px; }
+    .btn-sm { min-height: 44px;
+      min-width: 44px; }
+    .btn-ghost { min-height: 44px;
+      min-width: 44px; }
   }
 
   /* ---- Form Controls ---- */

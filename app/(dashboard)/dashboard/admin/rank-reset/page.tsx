@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/src/lib/supabase/client';
 import { Icon } from '@iconify/react';
-import { RANK_TIERS, getRankFromMMR } from '@/src/lib/rank-utils';
+import { RANK_TIERS } from '@/src/lib/rank-utils';
 import RankBadge from '@/src/components/RankBadge';
 import toast from 'react-hot-toast';
 import { logActivity } from '@/src/lib/activity-log';
@@ -142,65 +142,17 @@ export default function AdminRankResetPage() {
 
     const executeReset = async (scheduleId: string, userId: string) => {
         const supabase = createClient();
-
-        // 1. Get the schedule
-        const { data: schedule } = await supabase
-            .from('rank_reset_schedule')
-            .select('*')
-            .eq('id', scheduleId)
-            .single();
-        if (!schedule) { toast.error('ไม่พบรายการ'); return; }
-
-        // 2. Get all profiles
-        const { data: profiles } = await supabase.from('profiles').select('id, mmr, display_name').eq('is_guest', false);
-        if (!profiles) { toast.error('ไม่พบข้อมูลผู้เล่น'); return; }
-
-        // 3. Get leaderboard stats for snapshot
-        const { data: leaderboard } = await supabase.from('view_leaderboard').select('*');
-        const statsMap: Record<string, { total_games: number; total_wins: number }> = {};
-        leaderboard?.forEach((r: any) => {
-            statsMap[r.user_id] = { total_games: r.total_games || 0, total_wins: r.total_wins || 0 };
+        const { error } = await supabase.rpc('execute_rank_reset', {
+            p_schedule_id: scheduleId,
+            p_rank_tiers: RANK_TIERS.map(rank => ({ name: rank.name, minMMR: rank.minMMR }))
         });
-
-        // 4. Snapshot into season_history
-        const snapshots = profiles.map(p => ({
-            reset_id: scheduleId,
-            user_id: p.id,
-            season_label: schedule.season_label,
-            final_mmr: p.mmr || 1000,
-            final_rank_name: getRankFromMMR(p.mmr || 1000).name,
-            total_games: statsMap[p.id]?.total_games || 0,
-            total_wins: statsMap[p.id]?.total_wins || 0
-        }));
-
-        const { error: snapErr } = await supabase.from('season_history').insert(snapshots);
-        if (snapErr) { toast.error('บันทึกประวัติซีซันล้มเหลว: ' + snapErr.message); return; }
-
-        // 5. Apply soft reset: new_mmr = 1000 + (current_mmr - 1000) / 2
-        const BASE_MMR = 1000;
-        for (const p of profiles) {
-            const oldMmr = p.mmr || BASE_MMR;
-            const newMmr = Math.round(BASE_MMR + (oldMmr - BASE_MMR) / 2);
-
-            await supabase.from('profiles').update({ mmr: newMmr }).eq('id', p.id);
-            await supabase.from('mmr_history').insert({
-                user_id: p.id,
-                old_mmr: oldMmr,
-                new_mmr: newMmr,
-                change: newMmr - oldMmr,
-                reason: `season_reset:${schedule.season_label}`
-            });
-        }
-
-        // 6. Mark schedule as executed
-        await supabase.from('rank_reset_schedule').update({ status: 'executed' }).eq('id', scheduleId);
+        if (error) { toast.error(error.message); return; }
         await logActivity({
             category: 'rank', action: 'rank.reset_execute',
-            description: `รีแรงค์ซีซัน "${schedule.season_label}" สำเร็จ (รีเซ็ต MMR ผู้เล่น ${profiles.length} คน)`,
-            targetType: 'rank_reset', targetId: scheduleId,
-            metadata: { seasonLabel: schedule.season_label, playerCount: profiles.length },
+            description: 'รีเซ็ตซีซันและบันทึกประวัติเรียบร้อยแล้ว',
+            targetType: 'rank_reset', targetId: scheduleId, metadata: { userId }
         });
-        toast.success(`รีแรงค์ ${schedule.season_label} สำเร็จ!`);
+        toast.success('รีเซ็ตซีซันสำเร็จ');
     };
 
     const runCancel = async (scheduleId: string) => {

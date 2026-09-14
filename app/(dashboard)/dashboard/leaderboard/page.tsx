@@ -27,6 +27,7 @@ interface LeaderboardEntry {
 }
 
 interface SeasonHistoryRow {
+    total_losses?: number | null;
     user_id: string;
     final_mmr: number;
     total_games: number | null;
@@ -82,14 +83,14 @@ export default function LeaderboardPage() {
         // Fetch executed resets as past seasons (นับซีซันตามการกดรีแรงค์)
         const { data: executedResets } = await supabase
             .from('rank_reset_schedule')
-            .select('id, reset_at, season_label')
+            .select('id, reset_at, executed_at, season_label')
             .eq('status', 'executed')
             .order('reset_at', { ascending: true });
         if (executedResets) {
             setPastSeasons(executedResets.map(r => ({
                 label: r.season_label,
                 resetId: r.id,
-                resetAt: r.reset_at
+                resetAt: r.executed_at || r.reset_at
             })));
         }
 
@@ -148,7 +149,7 @@ export default function LeaderboardPage() {
                 mmr: r.final_mmr,
                 total_games: r.total_games || 0,
                 total_wins: r.total_wins || 0,
-                total_losses: (r.total_games || 0) - (r.total_wins || 0),
+                total_losses: r.total_losses || 0,
                 total_points: 0,
                 total_spent: 0
             }));
@@ -183,11 +184,11 @@ export default function LeaderboardPage() {
             // Fetch the latest executed reset date
             const { data: resets } = await supabase
                 .from('rank_reset_schedule')
-                .select('reset_at')
+                .select('reset_at, executed_at')
                 .eq('status', 'executed')
-                .order('reset_at', { ascending: false })
+                .order('executed_at', { ascending: false })
                 .limit(1);
-            const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
+            const resetDate = resets && resets[0] ? (resets[0].executed_at || resets[0].reset_at) : '1970-01-01T00:00:00Z';
 
             // เช็ค "กลับเข้าอันดับทันที": นับจากการเล่นแมตช์ที่จบแล้ว (กดชนะ/แพ้/เสมอ = คำนวณแต้ม)
             // หลังรีแรงค์ล่าสุด ไม่ต้องรอ admin ปิดก๊วน — พอมีผลแมตช์ก็โผล่กลับมาในอันดับเลย
@@ -195,7 +196,7 @@ export default function LeaderboardPage() {
                 .from('matches')
                 .select('id, created_at')
                 .eq('status', 'finished')
-                .gt('created_at', resetDate);
+                .gte('finished_at', resetDate);
             const playedSinceResetSet = new Set<string>();
             if (seasonFinishedMatches && seasonFinishedMatches.length > 0) {
                 const { data: seasonMatchPlayers } = await supabase
@@ -219,6 +220,7 @@ export default function LeaderboardPage() {
             const { data: existingPenalties } = await supabase
                 .from('mmr_history')
                 .select('user_id, change')
+                .gte('created_at', resetDate)
                 .like('reason', 'absence_penalty:%');
             const penaltyByUser: Record<string, number> = {};
             existingPenalties?.forEach(p => {
@@ -294,7 +296,7 @@ export default function LeaderboardPage() {
             })
             .map(r => {
                 const achs = [...(achievementsMap[r.user_id] || [])];
-                const loseCount = r.total_games - r.total_wins;
+                const loseCount = r.total_losses || 0;
 
                 if (loseCount >= 20) {
                     achs.push({ name: 'เน้นเปิดไม่เน้นจบ', icon: 'solar:moon-stars-bold', type: 'troll' });
@@ -318,7 +320,7 @@ export default function LeaderboardPage() {
                         user_id: profile.id,
                         display_name: profile.display_name,
                         skill_level: profile.skill_level || 'N/A',
-                        mmr: profile.mmr || 1000,
+                        mmr: profile.mmr ?? 1000,
                         total_games: 0,
                         total_wins: 0,
                         total_losses: 0,
@@ -464,7 +466,7 @@ export default function LeaderboardPage() {
                                     <div>
                                         <h2 className="text-lg font-black leading-none mb-1.5">{myPersonalData.display_name}</h2>
                                         <div className="flex items-center gap-2">
-                                            <RankBadge mmr={myPersonalData.mmr || 1000} size="sm" showName={true} className="bg-white/10 border-white/10 text-white" />
+                                            <RankBadge mmr={myPersonalData.mmr ?? 1000} size="sm" showName={true} className="bg-white/10 border-white/10 text-white" />
                                             <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
                                                 อันดับของคุณ: {myFullRank > 0 ? `#${myFullRank}` : '-'}
                                             </span>
@@ -478,7 +480,7 @@ export default function LeaderboardPage() {
                                         <span className="text-sm font-black text-orange-400">{getStatValue(myPersonalData)} <span className="text-[10px] font-bold text-white/40">{currentFilter.unit}</span></span>
                                     </div>
                                     {(() => {
-                                        const { rank: nextRank, pointsNeeded, progress } = getNextRank(myPersonalData.mmr || 1000);
+                                        const { rank: nextRank, pointsNeeded, progress } = getNextRank(myPersonalData.mmr ?? 1000);
                                         return (
                                             <div className="space-y-2">
                                                 <div className="flex justify-between items-end">
@@ -684,7 +686,7 @@ export default function LeaderboardPage() {
 
                                             {/* Rank Badge in List */}
                                             <div className="shrink-0">
-                                                <RankBadge mmr={entry.mmr || 1000} size="sm" showName={false} />
+                                                <RankBadge mmr={entry.mmr ?? 1000} size="sm" showName={false} />
                                             </div>
 
                                             {/* Stats */}
@@ -867,7 +869,7 @@ function PodiumCard({ entry, rank, statValue, unit, isMe }: PodiumCardProps) {
                 </div>
                 {/* Float Rank Badge on Avatar */}
                 <div className="absolute -bottom-2 -right-2 transform scale-110">
-                    <RankBadge mmr={entry.mmr || 1000} size="sm" showMMR={false} />
+                    <RankBadge mmr={entry.mmr ?? 1000} size="sm" showMMR={false} />
                 </div>
             </div>
 

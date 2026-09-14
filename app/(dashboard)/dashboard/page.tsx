@@ -3,7 +3,7 @@ import type { Event } from '@/src/types';
 import Link from 'next/link';
 import { Icon } from '@iconify/react';
 import DashboardPaymentStatus from '@/src/components/DashboardPaymentStatus';
-import { billedShuttleCount } from '@/src/lib/utils/billing';
+import { fetchBilling } from '@/src/lib/utils/billing-data';
 
 export default async function DashboardPage() {
     const supabase = await createClient();
@@ -21,13 +21,16 @@ export default async function DashboardPage() {
         .limit(1);
 
     const todayEvent = events?.[0] || null;
-    const today = todayEvent?.event_date || new Date().toLocaleDateString('en-CA');
 
     let playerCount = 0;
     let myPlayer = null;
     let todayBillAmount = 0;
     let myMatchCount = 0;
     let todayShuttles = 0;
+    let todayPaid = 0;
+    let todayPending = 0;
+    let missingShuttleMatches = 0;
+    let billingUnavailable = false;
 
     if (todayEvent) {
         const { count } = await supabase
@@ -40,36 +43,16 @@ export default async function DashboardPage() {
 
         if (myPlayer) {
             try {
-                // Get match count
-                const { count: matchCount } = await supabase
-                    .from('match_players')
-                    .select('*, matches!inner(*)', { count: 'exact', head: true })
-                    .eq('user_id', user!.id)
-                    .eq('matches.event_id', todayEvent.id)
-                    .in('matches.status', ['playing', 'finished']);
-                myMatchCount = matchCount || 0;
-
-                const { data: summary } = await supabase.from('view_billing_summary')
-                    .select('*')
-                    .eq('event_date', today)
-                    .eq('user_id', user!.id)
-                    .maybeSingle();
-
-                if (summary) {
-                    todayBillAmount = summary.total_cost || summary.total_amount || summary.amount || summary.cost || 0;
-                    todayShuttles = summary.total_shuttlecocks || 0;
-                } else {
-                    const { data: todayMatches } = await supabase.from('match_players').select('*, matches!inner(*)').eq('user_id', user!.id).eq('matches.event_id', todayEvent.id).in('matches.status', ['finished', 'playing']);
-                    let totalShuttles = 0;
-                    todayMatches?.forEach((mp: any) => {
-                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                        totalShuttles += billedShuttleCount(mp.matches?.shuttlecock_numbers);
-                    });
-                    todayShuttles = totalShuttles;
-                    todayBillAmount = todayEvent.entry_fee + (todayEvent.shuttlecock_price * totalShuttles) + (myPlayer.additional_cost || 0) - (myPlayer.discount || 0);
-                    todayBillAmount = Math.max(0, todayBillAmount);
-                }
+                const [summary] = await fetchBilling(supabase, { eventId: todayEvent.id, userId: user!.id });
+                if (!summary) throw new Error('ไม่พบข้อมูลบิล');
+                todayBillAmount = Number(summary.total_cost);
+                myMatchCount = summary.total_games;
+                todayShuttles = summary.total_shuttlecocks;
+                todayPaid = Number(summary.total_paid);
+                todayPending = Number(summary.pending_amount);
+                missingShuttleMatches = summary.missing_shuttle_matches;
             } catch (e) {
+                billingUnavailable = true;
                 console.error('Error fetching billing info:', e);
             }
         }
@@ -104,6 +87,8 @@ export default async function DashboardPage() {
                             {myPlayer ? (
                                 <div className="flex flex-col items-end gap-1.5 shrink-0">
                                     <span className="text-xs font-bold uppercase tracking-wide text-gray-500">สถานะของคุณ</span>
+                                    {billingUnavailable ? <p role="alert" className="text-xs text-red-700">โหลดบิลไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนชำระเงิน</p> : <p className="text-xs text-gray-600">รับแล้ว ฿{todayPaid.toFixed(2)} · ค้างชำระ ฿{todayPending.toFixed(2)}</p>}
+                                    {missingShuttleMatches > 0 && <p className="text-xs text-amber-700">ยอดประมาณ: รอตรวจเลขลูก {missingShuttleMatches} แมตช์</p>}
                                     <div className="flex flex-wrap justify-end gap-2 max-w-[280px]">
                                         {todayBillAmount > 0 && (
                                             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold shadow-sm" style={{ background: 'var(--gray-900)', color: 'white' }}>

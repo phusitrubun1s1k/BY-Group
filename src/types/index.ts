@@ -31,6 +31,7 @@ export interface Event {
 }
 
 export interface EventPlayer {
+    paid_amount?: number;
     id: string;
     event_id: string;
     user_id: string;
@@ -47,6 +48,7 @@ export interface EventPlayer {
 }
 
 export interface Match {
+    updated_at?: string;
     id: string;
     event_id: string;
     court_number: string;

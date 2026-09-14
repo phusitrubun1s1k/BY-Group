@@ -22,17 +22,17 @@ export default async function HomePage() {
   try {
     const { data: resets } = await supabase
       .from('rank_reset_schedule')
-      .select('reset_at')
+      .select('reset_at, executed_at')
       .eq('status', 'executed')
-      .order('reset_at', { ascending: false })
+      .order('executed_at', { ascending: false })
       .limit(1);
-    const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
+    const resetDate = resets && resets[0] ? (resets[0].executed_at || resets[0].reset_at) : '1970-01-01T00:00:00Z';
 
     const { data: closedEvents } = await supabase
       .from('events')
       .select('id, event_date, created_at')
       .eq('status', 'closed')
-      .gt('created_at', resetDate)
+      .gte('finished_at', resetDate)
       .order('created_at', { ascending: true });
 
     if (closedEvents && closedEvents.length > 0 && rawLeaderboard) {

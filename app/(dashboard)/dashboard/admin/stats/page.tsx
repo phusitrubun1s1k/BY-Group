@@ -5,6 +5,8 @@ import { createClient } from '@/src/lib/supabase/client';
 import { Icon } from '@iconify/react';
 import { format } from 'date-fns';
 import { th } from 'date-fns/locale';
+import { fetchBilling } from '@/src/lib/utils/billing-data';
+import type { Event } from '@/src/types';
 
 interface StatCardProps {
     title: string;
@@ -34,8 +36,9 @@ export default function AdminStatsPage() {
         totalProfit: 0,
         eventCount: 0
     });
-    const [events, setEvents] = useState<any[]>([]);
+    const [events, setEvents] = useState<(Event & { revenue: number; expense: number; profit: number })[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
 
     useEffect(() => {
         loadStats();
@@ -43,49 +46,32 @@ export default function AdminStatsPage() {
 
     const loadStats = async () => {
         setLoading(true);
-        const supabase = createClient();
-
-        // 1. Load all events with their players and costs
-        const { data: eventData } = await supabase
-            .from('events')
-            .select('*, event_players(amount, payment_status)')
-            .order('event_date', { ascending: false });
-
-        if (eventData) {
-            let rev = 0;
-            let exp = 0;
-
-            const processedEvents = eventData.map(ev => {
-                const eventRevenue = ev.event_players
-                    ?.filter((p: any) => p.payment_status === 'paid')
-                    .reduce((sum: number, p: any) => sum + (p.amount || 0), 0) || 0;
-
-                const eventExpense = (ev.actual_court_fee || 0) +
-                    ((ev.actual_shuttle_box_price || 0) * (ev.actual_shuttle_boxes_used || 0));
-
-                rev += eventRevenue;
-                exp += eventExpense;
-
-                return {
-                    ...ev,
-                    revenue: eventRevenue,
-                    expense: eventExpense,
-                    profit: eventRevenue - eventExpense
-                };
+        setLoadError('');
+        try {
+            const supabase = createClient();
+            const [eventResult, bills] = await Promise.all([
+                supabase.from('events').select('*').order('event_date', { ascending: false }),
+                fetchBilling(supabase)
+            ]);
+            if (eventResult.error) throw eventResult.error;
+            const processedEvents = (eventResult.data as Event[]).map(event => {
+                const revenue = bills.filter(bill => bill.event_id === event.id).reduce((sum, bill) => sum + Number(bill.total_paid), 0);
+                const expense = Number(event.actual_court_fee || 0) + Number(event.actual_shuttle_box_price || 0) * Number(event.actual_shuttle_boxes_used || 0);
+                return { ...event, revenue, expense, profit: revenue - expense };
             });
-
+            const totalRevenue = processedEvents.reduce((sum, event) => sum + event.revenue, 0);
+            const totalExpense = processedEvents.reduce((sum, event) => sum + event.expense, 0);
             setEvents(processedEvents);
-            setStats({
-                totalRevenue: rev,
-                totalExpense: exp,
-                totalProfit: rev - exp,
-                eventCount: processedEvents.length
-            });
+            setStats({ totalRevenue, totalExpense, totalProfit: totalRevenue - totalExpense, eventCount: processedEvents.length });
+        } catch (error) {
+            setLoadError(error instanceof Error ? error.message : (error as { message?: string }).message || 'โหลดสถิติไม่สำเร็จ');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" /></div>;
+    if (loadError) return <div role="alert" className="card space-y-3"><p className="text-red-700">{loadError}</p><button onClick={loadStats} className="btn btn-primary">ลองโหลดใหม่</button></div>;
 
     return (
         <div className="animate-in pb-20">

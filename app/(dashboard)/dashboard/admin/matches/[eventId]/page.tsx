@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { createClient } from '@/src/lib/supabase/client';
 import type { Event, EventPlayer, Match, Profile } from '@/src/types';
@@ -12,8 +12,10 @@ import RankBadge from '@/src/components/RankBadge';
 import { getRankFromMMR } from '@/src/lib/rank-utils';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import { truncateName } from '@/src/lib/string-utils';
-import { billedShuttleCount } from '@/src/lib/utils/billing';
+import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
 import { logActivity } from '@/src/lib/activity-log';
+import { validateMatchInput, preserveShuttles } from '@/src/lib/utils/match-validation';
+import { fetchBilling, savePayment, cancelPayment, type BillingRow } from '@/src/lib/utils/billing-data';
 
 const GUEST_SKILL_OPTIONS: SelectOption[] = [
     { value: '', label: '-- เลือกระดับ --', icon: 'solar:question-circle-linear' },
@@ -53,6 +55,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [courtNumber, setCourtNumber] = useState('');
     const [shuttlecockNumber, setShuttlecockNumber] = useState('');
     const [creating, setCreating] = useState(false);
+    const savingMatchRef = useRef(false);
+    const [matchErrors, setMatchErrors] = useState<string[]>([]);
+    const [billingError, setBillingError] = useState('');
+    const [billingRows, setBillingRows] = useState<BillingRow[]>([]);
     const [scoreMatch, setScoreMatch] = useState<Match | null>(null);
     const [winner, setWinner] = useState<'A' | 'B' | 'Draw' | 'None' | null>(null);
     const [matchSeq, setMatchSeq] = useState<string>('');
@@ -70,7 +76,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [searchQuery, setSearchQuery] = useState('');
     const [paymentSearchQuery, setPaymentSearchQuery] = useState('');
     // Add shuttlecock modal state
-    const [addingShuttlecockMatch, setAddingShuttlecockMatch] = useState<{ id: string, currentNumbers: string[] } | null>(null);
+    const [addingShuttlecockMatch, setAddingShuttlecockMatch] = useState<{ id: string; currentNumbers: string[]; updatedAt: string } | null>(null);
     const [newShuttlecockNumber, setNewShuttlecockNumber] = useState('');
 
     // Add Substitute Player State
@@ -123,8 +129,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                 totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
             });
 
-            const amount = (event.entry_fee || 0) + totalShuttleCost + (p.additional_cost || 0) - (p.discount || 0);
-            bills[p.user_id] = Math.max(0, amount);
+            bills[p.user_id] = calculateBill(event.entry_fee || 0, 1, totalShuttleCost, p.additional_cost || 0, p.discount || 0);
         });
         return bills;
     }, [players, matches, event]);
@@ -174,12 +179,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
     const loadData = useCallback(async (id: string) => {
         const supabase = createClient();
-        const [eventRes, playersRes, matchesRes, userRes] = await Promise.all([
+        const [eventRes, playersRes, matchesRes, userRes, financialRows] = await Promise.all([
             supabase.from('events').select('*').eq('id', id).single(),
             supabase.from('event_players').select('*, profiles(*)').eq('event_id', id).order('created_at'),
             supabase.from('matches').select('*, match_players(*, profiles(*))').eq('event_id', id).order('created_at', { ascending: true }),
-            supabase.auth.getUser()
+            supabase.auth.getUser(),
+            fetchBilling(supabase, { eventId: id }).catch(error => { setBillingError(error.message); return null; })
         ]);
+        if (financialRows) { setBillingRows(financialRows); setBillingError(''); }
         if (eventRes.data) setEvent(eventRes.data as Event);
         if (playersRes.data) setPlayers(playersRes.data as EventPlayer[]);
         if (matchesRes.data) setMatches(matchesRes.data as Match[]);
@@ -275,7 +282,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     };
 
     const addShuttlecock = (matchId: string, currentNumbers: string[]) => {
-        setAddingShuttlecockMatch({ id: matchId, currentNumbers });
+        const match = matches.find(item => item.id === matchId);
+        if (!match?.updated_at) { toast.error('กรุณาโหลดข้อมูลแมตช์ใหม่'); return; }
+        setAddingShuttlecockMatch({ id: matchId, currentNumbers, updatedAt: match.updated_at });
         setNewShuttlecockNumber('');
     };
 
@@ -300,12 +309,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         const supabase = createClient();
         const newNumbers = [...(addingShuttlecockMatch.currentNumbers || []), num];
 
-        const { error } = await supabase.from('matches').update({ shuttlecock_numbers: newNumbers }).eq('id', addingShuttlecockMatch.id);
+        const { error } = await supabase.from('matches').update({ shuttlecock_numbers: newNumbers }).eq('id', addingShuttlecockMatch.id).eq('updated_at', addingShuttlecockMatch.updatedAt).select('id').single();
 
         setCreating(false);
         setAddingShuttlecockMatch(null);
 
-        if (error) { toast.error('เกิดข้อผิดพลาดในการเบิกลูกแบด'); return; }
+        if (error) { toast.error('เพิ่มลูกไม่สำเร็จ กรุณาโหลดใหม่: ' + error.message); return; }
 
         await logActivity({
             category: 'match', action: 'match.shuttle_add',
@@ -335,8 +344,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         const supabase = createClient();
         const newNumbers = currentNumbers.filter((_, i) => i !== idx);
-        const { error } = await supabase.from('matches').update({ shuttlecock_numbers: newNumbers }).eq('id', matchId);
-        if (error) { toast.error('เกิดข้อผิดพลาดในการลบลูกแบด'); return; }
+        const { error } = await supabase.from('matches').update({ shuttlecock_numbers: newNumbers }).eq('id', matchId).eq('updated_at', matches.find(match => match.id === matchId)?.updated_at || '').select('id').single();
+        if (error) { toast.error('ลบลูกไม่สำเร็จ กรุณาโหลดใหม่: ' + error.message); return; }
 
         await logActivity({
             category: 'match', action: 'match.shuttle_remove',
@@ -431,83 +440,57 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         setShuttlecockNumber(match.shuttlecock_numbers?.[0] || '');
         setMatchSeq(match.match_number ? String(match.match_number) : '');
         setEditingMatchId(match.id);
+        setMatchErrors([]);
         setShowForm(true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const saveMatch = async () => {
-        if (teamA.length !== 2 || teamB.length !== 2) { toast.error('เลือกผู้เล่นทีมละ 2 คน'); return; }
-        if (!courtNumber) { toast.error('ระบุหมายเลขคอร์ท'); return; }
-        if (!matchSeq.trim()) { toast.error('ระบุลำดับแมตช์ก่อน'); return; }
-
-        const shuttleVal = shuttlecockNumber.trim();
-        if (!shuttleVal) { toast.error('ระบุหมายเลขลูกก่อน'); return; }
-        if (allUsedShuttlecocks.has(shuttleVal)) {
-            toast.error(`ลูกแบดหมายเลข ${shuttleVal} ถูกใช้ไปแล้วในก๊วนนี้`);
-            return;
-        }
-
-        const title = editingMatchId ? 'บันทึกการแก้ไข?' : 'สร้างแมตช์?';
-        const msg = editingMatchId ? 'ยืนยันการแก้ไขข้อมูลแมตช์ที่ยังไม่เริ่มนี้?' : `ยืนยันการสร้างแมตช์ที่คอร์ท ${courtNumber}?`;
-
-        const ok = await confirm({
-            title,
-            message: msg,
-            type: 'info',
-            confirmText: editingMatchId ? 'บันทึก' : 'ยืนยันสร้าง'
-        });
-        if (!ok) return;
-
+        if (savingMatchRef.current) return;
+        const errors = validateMatchInput(teamA, teamB, courtNumber, matchSeq, shuttlecockNumber);
+        const original = matches.find(match => match.id === editingMatchId);
+        const shuttles = preserveShuttles(original?.shuttlecock_numbers || [], shuttlecockNumber);
+        if (new Set(shuttles).size !== shuttles.length || shuttles.some(number => allUsedShuttlecocks.has(number))) errors.push('หมายเลขลูกซ้ำ กรุณาตรวจสอบอีกครั้ง');
+        if (matches.some(match => match.id !== editingMatchId && match.match_number === Number(matchSeq))) errors.push('ลำดับแมตช์นี้มีแล้ว กรุณาใช้ลำดับอื่น');
+        setMatchErrors(errors);
+        if (errors.length) return;
+        savingMatchRef.current = true;
         setCreating(true);
         try {
+            const ok = await confirm({
+                title: editingMatchId ? 'บันทึกการแก้ไข?' : 'สร้างแมตช์?',
+                message: `แมตช์ #${Number(matchSeq)} · คอร์ท ${courtNumber.trim()} · ลูก ${shuttles.join(', ')} · ผู้เล่น 4 คน`,
+                type: 'info',
+                confirmText: editingMatchId ? 'บันทึก' : 'สร้างแมตช์'
+            });
+            if (!ok) return;
             const supabase = createClient();
-            const shuttles = shuttleVal ? [shuttleVal] : [];
-
-            if (editingMatchId) {
-                const { error: matchErr } = await supabase.from('matches').update({
-                    court_number: courtNumber,
-                    shuttlecock_numbers: shuttles,
-                    match_number: matchSeq ? parseInt(matchSeq) : null
-                }).eq('id', editingMatchId);
-                if (matchErr) throw matchErr;
-
-                await supabase.from('match_players').delete().eq('match_id', editingMatchId);
-                await supabase.from('match_players').insert([
-                    ...teamA.map((uid) => ({ match_id: editingMatchId, user_id: uid, team: 'A' as const })),
-                    ...teamB.map((uid) => ({ match_id: editingMatchId, user_id: uid, team: 'B' as const })),
-                ]);
-                await logActivity({
-                    category: 'match', action: 'match.edit',
-                    description: `แก้ไขแมตช์ #${matchSeq} คอร์ท ${courtNumber} (ลูกหมายเลข ${shuttleVal})`,
-                    targetType: 'match', targetId: editingMatchId, eventId,
-                    metadata: { court: courtNumber, matchNumber: matchSeq, shuttles },
-                });
-                toast.success('แก้ไขข้อมูลแมตช์สำเร็จ');
-            } else {
-                const { data: match, error } = await supabase.from('matches').insert({
-                    event_id: eventId,
-                    court_number: courtNumber,
-                    shuttlecock_numbers: shuttles,
-                    status: 'waiting',
-                    match_number: matchSeq ? parseInt(matchSeq) : null
-                }).select().single();
-                if (error) { toast.error(error.message); return; }
-                await supabase.from('match_players').insert([
-                    ...teamA.map((uid) => ({ match_id: match.id, user_id: uid, team: 'A' as const })),
-                    ...teamB.map((uid) => ({ match_id: match.id, user_id: uid, team: 'B' as const })),
-                ]);
-                await logActivity({
-                    category: 'match', action: 'match.create',
-                    description: `สร้างแมตช์ #${matchSeq} คอร์ท ${courtNumber} (ลูกหมายเลข ${shuttleVal})`,
-                    targetType: 'match', targetId: match.id, eventId,
-                    metadata: { court: courtNumber, matchNumber: matchSeq, shuttles },
-                });
-                toast.success('สร้างแมตช์สำเร็จ');
-            }
+            const { data: savedId, error } = await supabase.rpc('save_match', {
+                p_match_id: editingMatchId,
+                p_event_id: eventId,
+                p_court: courtNumber.trim(),
+                p_number: Number(matchSeq),
+                p_shuttles: shuttles,
+                p_team_a: teamA,
+                p_team_b: teamB,
+                p_expected_updated_at: original?.updated_at || null
+            });
+            if (error) throw error;
+            await logActivity({
+                category: 'match', action: editingMatchId ? 'match.edit' : 'match.create',
+                description: `บันทึกแมตช์ #${matchSeq} คอร์ท ${courtNumber.trim()}`,
+                targetType: 'match', targetId: savedId, eventId,
+                metadata: { shuttles, matchNumber: Number(matchSeq) }
+            });
+            toast.success('บันทึกแมตช์สำเร็จ');
             setShowForm(false); setTeamA([]); setTeamB([]); setCourtNumber(''); setShuttlecockNumber(''); setMatchSeq(''); setEditingMatchId(null);
-            loadData(eventId);
-        } catch { toast.error('เกิดข้อผิดพลาดในการบันทึกข้อมูล'); }
-        finally { setCreating(false); }
+            await loadData(eventId);
+        } catch (error) {
+            setMatchErrors([error instanceof Error ? error.message : (error as { message?: string }).message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่']);
+        } finally {
+            setCreating(false);
+            savingMatchRef.current = false;
+        }
     };
 
     const updateMatchStatus = async (matchId: string, status: 'playing' | 'finished') => {
@@ -534,7 +517,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             updateData.team_b_score = 0;
         }
 
-        const { error } = await supabase.from('matches').update(updateData).eq('id', matchId);
+        const { error } = await supabase.from('matches').update(updateData).eq('id', matchId).eq('updated_at', m?.updated_at || '').select('id').single();
         if (error) {
             toast.error('เกิดข้อผิดพลาด: ' + error.message);
             return;
@@ -558,7 +541,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (!ok) return;
 
         const supabase = createClient();
-        const { error } = await supabase.from('matches').delete().eq('id', matchId);
+        const { error } = await supabase.from('matches').delete().eq('id', matchId).eq('updated_at', m?.updated_at || '').select('id').single();
 
         if (error) {
             toast.error('ไม่สามารถลบแมตช์ได้: ' + error.message);
@@ -588,8 +571,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         const supabase = createClient();
         const { error } = await supabase.from('matches').update({
             status: 'waiting',
-            shuttlecock_numbers: [] // Clear shuttlecocks to reverse billing
-        }).eq('id', matchId);
+            team_a_score: 0,
+            team_b_score: 0
+        }).eq('id', matchId).eq('updated_at', cancelling?.updated_at || '').select('id').single();
 
         if (error) {
             toast.error('ไม่สามารถยกเลิกแมตช์ได้: ' + error.message);
@@ -625,11 +609,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (!ok) return;
 
         const supabase = createClient();
-        await supabase.from('matches').update({
-            status: 'finished',
-            team_a_score: totalA,
-            team_b_score: totalB,
-        }).eq('id', scoreMatch.id);
+        const { error } = await supabase.rpc('finish_match', { p_match_id: scoreMatch.id, p_score_a: totalA, p_score_b: totalB, p_expected_updated_at: scoreMatch.updated_at || null });
+        if (error) { toast.error(error.message); return; }
 
         const resultText = isNone ? 'ไม่แจ้งผล' : (isDraw ? 'เสมอ' : `ทีม ${winner} ชนะ`);
         await logActivity({
@@ -648,7 +629,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (ep.payment_status === 'paid') {
             const ok = await confirm({
                 title: 'ยกเลิกการชำระเงิน?',
-                message: `เปลี่ยนสถานะ ${prof?.display_name} เป็นยังไม่จ่ายใช่หรือไม่?`,
+                message: `ยกเลิกรายการรับเงินทั้งหมด ฿${Number(ep.paid_amount || 0).toFixed(2)} ของ ${prof?.display_name}? การทำรายการนี้ไม่ได้คืนเงินจริง`,
                 type: 'warning',
                 confirmText: 'ยืนยันยกเลิก'
             });
@@ -656,16 +637,10 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
             setUpdatingPayment(ep.user_id);
             const supabase = createClient();
-            const { error } = await supabase
-                .from('event_players')
-                .update({ 
-                    payment_status: 'pending',
-                    payment_method: null
-                })
-                .eq('id', ep.id);
+            const { error } = await cancelPayment(supabase, ep.id);
             setUpdatingPayment(null);
 
-            if (error) { toast.error('อัปเดตไม่สำเร็จ'); return; }
+            if (error) { toast.error(error.message || 'อัปเดตไม่สำเร็จ'); return; }
             await logActivity({
                 category: 'payment', action: 'payment.unpay',
                 description: `ยกเลิกการชำระเงินของ ${prof?.display_name ?? 'ผู้เล่น'}`,
@@ -682,17 +657,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         setPaymentModalPlayer(null);
         setUpdatingPayment(ep.user_id);
         const supabase = createClient();
-        const { error } = await supabase
-            .from('event_players')
-            .update({ 
-                payment_status: 'paid',
-                payment_method: method
-            })
-            .eq('id', ep.id);
+        const row = billingRows.find(item => item.event_player_id === ep.id);
+        const { error } = await savePayment(supabase, ep.id, method, Number(row?.pending_amount || 0));
         setUpdatingPayment(null);
 
         if (error) {
-            toast.error('อัปเดตไม่สำเร็จ');
+            toast.error(error.message || 'อัปเดตไม่สำเร็จ');
         } else {
             const prof = ep.profiles as unknown as Profile;
             await logActivity({
@@ -762,7 +732,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         // 4. MMR-based weights (direct MMR values)
         const getWeight = (prof: Profile | null) => {
-            return prof?.mmr || 1000;
+            return prof?.mmr ?? 1000;
         };
 
         // 5. Find best 2v2 combination using MMR balance
@@ -802,13 +772,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
         if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
 
-    const transferTotal = players
-        .filter(p => p.payment_status === 'paid' && p.payment_method === 'transfer')
-        .reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0);
-
-    const cashTotal = players
-        .filter(p => p.payment_status === 'paid' && p.payment_method === 'cash')
-        .reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0);
+    const transferTotal = billingRows.reduce((sum, row) => sum + Number(row.transfer_paid), 0);
+    const cashTotal = billingRows.reduce((sum, row) => sum + Number(row.cash_paid), 0);
 
     const matchesWithIndex = matches.map((m, idx) => ({ ...m, originalIndex: idx + 1 }));
     const filteredMatches = matchesWithIndex.filter(m => matchFilter === 'all' || m.status === matchFilter);
@@ -817,6 +782,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     return (
         <>
             <div className="animate-in">
+                {billingError && <div role="alert" className="mb-4 rounded-lg bg-amber-50 p-4 text-amber-900">{billingError}<button className="btn btn-sm ml-2" onClick={() => loadData(eventId)}>โหลดใหม่</button></div>}
                 <Link href={`/dashboard/admin/events/${eventId}`} className="inline-flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--gray-500)' }}>
                     <Icon icon="solar:arrow-left-linear" width={16} /> กลับหน้าก๊วน
                 </Link>
@@ -862,7 +828,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100" title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
                                 <Icon icon="solar:wallet-money-linear" width={16} className="text-green-500" />
                                 <span className="text-xs font-semibold text-green-700">
-                                    เก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()}
+                                    เก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.paid_amount || 0), 0).toLocaleString()}
                                     <span className="text-gray-400 mx-1">/</span>
                                     <span className="text-blue-700">฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}</span>
                                     <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} · สด ฿{cashTotal.toLocaleString()})</span>
@@ -945,7 +911,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                 </button>
                                                             </div>
                                                             <div className="flex items-center gap-2 mt-1">
-                                                                <RankBadge mmr={prof.mmr || 1000} size="sm" showMMR={false} />
+                                                                <RankBadge mmr={prof.mmr ?? 1000} size="sm" showMMR={false} />
                                                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-900 text-white shadow-sm">
                                                                     {playerStats[prof.id]?.total || 0} เกม
                                                                 </span>
@@ -1000,7 +966,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                             type="number"
                                             className="form-input form-input-plain h-[42px]"
                                             placeholder="เช่น 1, 2..."
-                                            value={matchSeq}
+                                            min={1} step={1} required aria-label="ลำดับแมตช์" value={matchSeq}
                                             onChange={(e) => setMatchSeq(e.target.value)}
                                             style={!matchSeq.trim() ? { borderColor: 'var(--warning)', background: 'rgba(245,158,11,0.05)' } : undefined}
                                         />
@@ -1015,7 +981,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         <input
                                             className="form-input form-input-plain h-[42px]"
                                             placeholder="ระบุเบอร์ลูก..."
-                                            value={shuttlecockNumber}
+                                            required aria-label="หมายเลขลูก" value={shuttlecockNumber}
                                             onChange={(e) => setShuttlecockNumber(e.target.value)}
                                             style={!shuttlecockNumber.trim() ? { borderColor: 'var(--warning)', background: 'rgba(245,158,11,0.05)' } : undefined}
                                         />
@@ -1024,7 +990,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         )}
                                     </div>
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex flex-wrap gap-2">
+                                    {matchErrors.length > 0 && <div role="alert" className="w-full rounded-lg bg-red-50 p-3 text-sm text-red-700"><p className="font-bold">กรุณาตรวจข้อมูลก่อนบันทึก</p><ul className="list-disc pl-5">{matchErrors.map(message => <li key={message}>{message}</li>)}</ul></div>}
                                     <button onClick={saveMatch} disabled={creating} className="btn btn-primary btn-sm">
                                         {creating ? <><div className="spinner" /> {editingMatchId ? 'กำลังบันทึก...' : 'สร้าง...'}</> : (editingMatchId ? 'บันทึกการแก้ไข' : 'สร้างแมตช์')}
                                     </button>
@@ -1167,7 +1134,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                     {truncateName(prof?.display_name, 20)}
                                                                                 </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
-                                                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         มือ {prof?.skill_level || 'N/A'}
                                                                                     </span>
@@ -1251,7 +1218,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                     {truncateName(prof?.display_name, 20)}
                                                                                 </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                                                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         มือ {prof?.skill_level || 'N/A'}
                                                                                     </span>
@@ -1329,7 +1296,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                                     {prof?.is_guest && <span className="text-[10px] font-bold text-orange-500 ml-1 bg-orange-50 px-1 py-0.5 rounded">ขาจร</span>}
                                                                                 </p>
                                                                                 <div className="flex flex-wrap items-center gap-1.5">
-                                                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                                                     <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                                         มือ {prof?.skill_level || 'N/A'}
                                                                                     </span>
@@ -1566,7 +1533,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                             </div>
                                                         );
                                                     })}
@@ -1619,7 +1586,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                             </div>
                                                         );
                                                     })}
@@ -1657,7 +1624,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     จ่ายแล้ว {players.filter(p => p.payment_status === 'paid').length}/{players.length} คน
                                                 </p>
                                                 <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(22,163,74,0.1)', color: 'var(--success)' }} title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
-                                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()} <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} | สด ฿{cashTotal.toLocaleString()})</span>
+                                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.paid_amount || 0), 0).toLocaleString()} <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} | สด ฿{cashTotal.toLocaleString()})</span>
                                                 </span>
                                                 <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6' }}>
                                                     ยอดทั้งหมด ฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}
@@ -2190,7 +2157,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         </span>
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-1.5">
-                                                        <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                        <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
                                                             {pstat?.total || 0} เกม
                                                         </span>
@@ -2256,7 +2223,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         </span>
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-1.5">
-                                                        <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                        <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
                                                             {pstat?.total || 0} เกม
                                                         </span>
@@ -2324,7 +2291,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                         </span>
                                                     </div>
                                                     <div className="flex flex-wrap items-center gap-1.5">
-                                                        <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} />
+                                                        <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
                                                             {pstat?.total || 0} เกม
                                                         </span>
@@ -2369,7 +2336,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             มือ {prof?.skill_level || 'N/A'}
                                                         </span>
                                                     </div>
-                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
+                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
                                             </div>
                                         );
@@ -2396,7 +2363,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             มือ {prof?.skill_level || 'N/A'}
                                                         </span>
                                                     </div>
-                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
+                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
                                                 <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
                                                     <Icon icon="solar:trash-bin-trash-bold" width={16} />
@@ -2425,7 +2392,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             มือ {prof?.skill_level || 'N/A'}
                                                         </span>
                                                     </div>
-                                                    <RankBadge mmr={prof?.mmr || 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
+                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
                                                 </div>
                                                 <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
                                                     <Icon icon="solar:trash-bin-trash-bold" width={16} />
@@ -2451,7 +2418,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             <div>
                                 <h3 className="text-base font-bold text-gray-950">เลือกวิธีการชำระเงิน</h3>
                                 <p className="text-xs text-gray-500 font-medium">
-                                    {(paymentModalPlayer.profiles as unknown as Profile)?.display_name} • ยอดชำระ ฿{(userBills[paymentModalPlayer.user_id] || 0).toLocaleString()}
+                                    {(paymentModalPlayer.profiles as unknown as Profile)?.display_name} • ยอดชำระ ฿{Number(billingRows.find(row => row.event_player_id === paymentModalPlayer.id)?.pending_amount || 0).toLocaleString()}
                                 </p>
                             </div>
                         </div>

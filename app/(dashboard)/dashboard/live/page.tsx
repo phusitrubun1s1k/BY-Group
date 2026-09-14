@@ -6,7 +6,7 @@ import type { Event, Match, Profile, EventPlayer } from '@/src/types';
 import { Icon } from '@iconify/react';
 import Link from 'next/link';
 import { truncateName } from '@/src/lib/string-utils';
-import { billedShuttleCount } from '@/src/lib/utils/billing';
+import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
 import ChampionsPodium from '@/src/components/ChampionsPodium';
 
 
@@ -54,7 +54,7 @@ export default function LiveBoardPage() {
                     const myDiscount = myEp?.discount || 0;
                     const myAdditionalCost = myEp?.additional_cost || 0;
                     const originalAmount = currentFee + totalShuttleCost + myAdditionalCost;
-                    const amount = Math.max(0, originalAmount - myDiscount);
+                    const amount = calculateBill(currentFee, currentShuttlecockPrice, totalShuttles, myAdditionalCost, myDiscount);
 
                     setMyBill({
                         amount,
@@ -403,6 +403,7 @@ export default function LiveBoardPage() {
                             </div>
 
                             <div className="space-y-2">
+                                <p className="text-sm font-bold">รับแล้ว ฿{Number(eventPlayers.find(player => player.user_id === currentUserId)?.paid_amount || 0).toFixed(2)} · ค้าง ฿{Math.max(0, myBill.amount - Number(eventPlayers.find(player => player.user_id === currentUserId)?.paid_amount || 0)).toFixed(2)}</p>
                                 <div className="flex items-center justify-between text-sm">
                                     <span className="font-bold text-gray-500">ค่าสนาม</span>
                                     <span className="font-black text-gray-900">฿{event.entry_fee}</span>

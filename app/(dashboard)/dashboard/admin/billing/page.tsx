@@ -2,16 +2,22 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/src/lib/supabase/client';
-import type { Event, EventPlayer, Profile } from '@/src/types';
+import type { Event } from '@/src/types';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { Icon } from '@iconify/react';
 import { truncateName } from '@/src/lib/string-utils';
-import { billedShuttleCount } from '@/src/lib/utils/billing';
 import { logActivity } from '@/src/lib/activity-log';
+import { fetchBilling, savePayment, cancelPayment } from '@/src/lib/utils/billing-data';
 
 
 interface PlayerBill {
+    pendingAmount?: number;
+    creditAmount?: number;
+    cashPaid?: number;
+    transferPaid?: number;
+    missingShuttleMatches?: number;
+    importedPayment?: boolean;
     eventPlayerId: string;
     userId: string;
     displayName: string;
@@ -28,6 +34,7 @@ interface PlayerBill {
     additionalCost?: number;
     discount?: number;
     eventDate?: string;
+    eventId?: string;
 }
 
 export default function AdminBillingPage() {
@@ -37,9 +44,14 @@ export default function AdminBillingPage() {
     const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
     const [bills, setBills] = useState<PlayerBill[]>([]);
     const [loading, setLoading] = useState(true);
+    const [billingError, setBillingError] = useState('');
     const [viewingSlip, setViewingSlip] = useState<string | null>(null);
     const [historyUser, setHistoryUser] = useState<{ id: string; name: string } | null>(null);
-        const [historyData, setHistoryData] = useState<any[]>([]);
+    const [historyData, setHistoryData] = useState<{
+        id: string; eventId: string; eventDate: string; amount: number; paidAmount: number; pendingAmount: number;
+        status: 'paid' | 'pending'; paymentMethod: 'cash' | 'transfer' | null; slipUrl: string | null;
+        games: number; shuttlecockCount: number; shuttlecockNums: string;
+    }[]>([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [paymentModalBill, setPaymentModalBill] = useState<PlayerBill | null>(null);
     const confirm = useConfirm();
@@ -92,169 +104,26 @@ export default function AdminBillingPage() {
     const loadBills = useCallback(async () => {
         if (!selectedEventId) return;
         setLoading(true);
-        const supabase = createClient();
-
+        setBillingError('');
         try {
-            if (selectedEventId === 'all') {
-                setSelectedEvent(null);
-                const { data: allEP } = await supabase.from('event_players').select('*, profiles(*), events(*)');
-                if (!allEP) { setLoading(false); return; }
-
-                const { data: allMP } = await supabase
-                    .from('match_players')
-                    .select('*, matches!inner(id, event_id, status, shuttlecock_numbers)');
-
-                const matchDetails: Record<string, { gamesPlayed: number; shuttlecocks: string[]; billedShuttles: number }> = {};
-                if (allMP) {
-                    allMP.forEach(mp => {
-                        const mStatus = mp.matches?.status;
-                        if (mStatus !== 'finished' && mStatus !== 'playing') return;
-
-                        const key = `${mp.user_id}_${mp.matches.event_id}`;
-                        if (!matchDetails[key]) matchDetails[key] = { gamesPlayed: 0, shuttlecocks: [], billedShuttles: 0 };
-
-                        matchDetails[key].gamesPlayed += 1;
-                        const matchObj = Array.isArray(mp.matches) ? mp.matches[0] : mp.matches;
-                        const nums = (matchObj?.shuttlecock_numbers || []).map((s: string) => s.trim()).filter(Boolean);
-                        matchDetails[key].shuttlecocks.push(...nums);
-                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                        matchDetails[key].billedShuttles += billedShuttleCount(nums);
-                    });
-                }
-
-                const userSummary: Record<string, PlayerBill & { totalOwed: number, totalPaid: number, shuttlecocks: string[], billedShuttles: number }> = {};
-                for (const ep of allEP as any[]) {
-                    const eventDate = ep.events?.event_date;
-                    if (selectedMonth !== 'all' && eventDate && !eventDate.startsWith(selectedMonth)) continue;
-
-                    const uid = ep.user_id;
-                    const event = ep.events;
-                    const eventId = event?.id;
-                    const detail = matchDetails[`${uid}_${eventId}`] || { gamesPlayed: 0, shuttlecocks: [], billedShuttles: 0 };
-
-                    // Cost: entry_fee + (billed shuttlecocks × price) + additional_cost - discount
-                    const amount = Math.max(0, (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.billedShuttles) + (ep.additional_cost || 0) - (ep.discount || 0));
-
-                    const billKey = `${uid}_${eventId}`; // Keep separate bill per event per user
-
-                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.billedShuttles);
-
-                    if (!userSummary[billKey]) {
-                        userSummary[billKey] = {
-                            eventPlayerId: ep.id,
-                            userId: uid,
-                            displayName: ep.profiles?.display_name || 'ไม่ทราบชื่อ',
-                            gamesPlayed: 0,
-                            amount: 0,
-                            baseAmount: 0,
-                            totalOwed: 0,
-                            totalPaid: 0,
-                            paymentStatus: ep.payment_status,
-                            paymentMethod: ep.payment_method,
-                            slipUrl: ep.slip_url,
-                            shuttlecocks: [],
-                            billedShuttles: 0,
-                            additionalCost: 0,
-                            discount: 0,
-                            eventDate: eventDate
-                        };
-                    }
-                    userSummary[billKey].additionalCost = (userSummary[billKey].additionalCost || 0) + (ep.additional_cost || 0);
-                    userSummary[billKey].discount = (userSummary[billKey].discount || 0) + (ep.discount || 0);
-
-                    userSummary[billKey].gamesPlayed += detail.gamesPlayed;
-                    userSummary[billKey].baseAmount = (userSummary[billKey].baseAmount || 0) + baseAmount;
-                    userSummary[billKey].totalOwed += amount;
-                    userSummary[billKey].shuttlecocks.push(...detail.shuttlecocks);
-                    userSummary[billKey].billedShuttles += detail.billedShuttles;
-
-                    if (ep.payment_status === 'pending') {
-                        userSummary[billKey].amount += amount;
-                    } else {
-                        userSummary[billKey].totalPaid += amount;
-                    }
-                }
-
-                const aggregatedBills = Object.values(userSummary).map(u => {
-                    return {
-                        ...u,
-                        shuttlecockCount: u.billedShuttles,
-                        shuttlecockNums: u.shuttlecocks.join(', ')
-                    };
-                }).filter(b => b.totalOwed > 0 || b.gamesPlayed > 0);
-
-                aggregatedBills.sort((a, b) => {
-                    // Primary sort by date descending
-                    const dateA = new Date(a.eventDate || '').getTime();
-                    const dateB = new Date(b.eventDate || '').getTime();
-                    if (dateA !== dateB) return dateB - dateA;
-
-                    // Secondary sort by payment status
-                    if (a.paymentStatus !== b.paymentStatus) return a.paymentStatus === 'pending' ? -1 : 1;
-                    return b.amount - a.amount;
-                });
-                setBills(aggregatedBills);
-            } else {
-                const event = events.find((e) => e.id === selectedEventId);
-                setSelectedEvent(event || null);
-
-                const { data: eventPlayers } = await supabase.from('event_players').select('*, profiles(*)').eq('event_id', selectedEventId);
-                if (!eventPlayers) { setLoading(false); return; }
-
-                const { data: matchData } = await supabase
-                    .from('match_players')
-                    .select('user_id, matches!inner(id, status, shuttlecock_numbers)')
-                    .eq('matches.event_id', selectedEventId);
-
-                const userMatchDetails: Record<string, { games: number; shuttlecocks: string[]; billedShuttles: number }> = {};
-                (matchData || []).forEach(m => {
-                    const matchArr = Array.isArray(m.matches) ? m.matches : [m.matches];
-                    const matchObj = matchArr[0];
-                    if (!matchObj) return;
-
-                    const mStatus = matchObj.status;
-                    if (mStatus !== 'finished' && mStatus !== 'playing') return;
-
-                    const uid = m.user_id;
-                    if (!userMatchDetails[uid]) userMatchDetails[uid] = { games: 0, shuttlecocks: [], billedShuttles: 0 };
-
-                    userMatchDetails[uid].games += 1;
-                    const nums = (matchObj?.shuttlecock_numbers || []).map((s: string) => s.trim()).filter(Boolean);
-                    userMatchDetails[uid].shuttlecocks.push(...nums);
-                    // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                    userMatchDetails[uid].billedShuttles += billedShuttleCount(nums);
-                });
-
-                const playerBills: PlayerBill[] = (eventPlayers as any[]).map(ep => {
-                    const detail = userMatchDetails[ep.user_id] || { games: 0, shuttlecocks: [], billedShuttles: 0 };
-                    const baseAmount = (event?.entry_fee || 0) + ((event?.shuttlecock_price || 0) * detail.billedShuttles);
-                    const amount = Math.max(0, baseAmount + (ep.additional_cost || 0) - (ep.discount || 0));
-                    return {
-                        eventPlayerId: ep.id,
-                        userId: ep.user_id,
-                        displayName: ep.profiles?.display_name || 'ไม่ทราบชื่อ',
-                        gamesPlayed: detail.games,
-                        amount,
-                        baseAmount,
-                        paymentStatus: ep.payment_status,
-                        paymentMethod: ep.payment_method,
-                        slipUrl: ep.slip_url,
-                        shuttlecockCount: detail.billedShuttles,
-                        shuttlecockNums: detail.shuttlecocks.join(', '),
-                        additionalCost: ep.additional_cost || 0,
-                        discount: ep.discount || 0
-                    };
-                });
-
-                playerBills.sort((a, b) => {
-                    if (a.paymentStatus !== b.paymentStatus) return a.paymentStatus === 'pending' ? -1 : 1;
-                    return b.amount - a.amount;
-                });
-                setBills(playerBills);
-            }
-        } catch (err) {
-            console.error(err);
-            toast.error('ไม่สามารถโหลดข้อมูลการเงินได้');
+            setSelectedEvent(events.find(event => event.id === selectedEventId) || null);
+            const rows = await fetchBilling(createClient(), selectedEventId === 'all' ? {} : { eventId: selectedEventId });
+            const nextBills = rows.filter(row => selectedMonth === 'all' || row.event_date.startsWith(selectedMonth)).map(row => ({
+                eventPlayerId: row.event_player_id, eventId: row.event_id, userId: row.user_id, displayName: row.display_name,
+                gamesPlayed: row.total_games, amount: Number(row.total_cost), baseAmount: Number(row.base_amount),
+                totalOwed: Number(row.total_cost), totalPaid: Number(row.total_paid),
+                pendingAmount: Number(row.pending_amount), creditAmount: Number(row.credit_amount),
+                cashPaid: Number(row.cash_paid), transferPaid: Number(row.transfer_paid),
+                paymentStatus: row.payment_status, paymentMethod: row.payment_method,
+                slipUrl: row.slip_url, shuttlecockCount: row.total_shuttlecocks,
+                shuttlecockNums: row.shuttlecock_nums, additionalCost: Number(row.additional_cost),
+                discount: Number(row.discount), eventDate: row.event_date,
+                missingShuttleMatches: row.missing_shuttle_matches, importedPayment: row.imported_payment
+            }));
+            nextBills.sort((first, second) => second.eventDate.localeCompare(first.eventDate) || second.pendingAmount - first.pendingAmount);
+            setBills(nextBills);
+        } catch (error) {
+            setBillingError(error instanceof Error ? error.message : 'โหลดบิลไม่สำเร็จ');
         } finally {
             setLoading(false);
         }
@@ -263,60 +132,18 @@ export default function AdminBillingPage() {
     const loadPlayerHistory = async (userId: string, displayName: string) => {
         setHistoryUser({ id: userId, name: displayName });
         setLoadingHistory(true);
-        const supabase = createClient();
-
+        setHistoryData([]);
         try {
-            const { data: epData } = await supabase
-                .from('event_players')
-                .select('*, events(*)')
-                .eq('user_id', userId)
-                .order('created_at', { ascending: false });
-
-            const { data: mpData } = await supabase
-                .from('match_players')
-                .select('*, matches!inner(id, event_id, status, shuttlecock_numbers)')
-                .eq('user_id', userId);
-
-            // Count players per match for proportional cost calculation
-
-            const matchDetails: Record<string, { games: number; shuttlecocks: string[]; billedShuttles: number }> = {};
-            (mpData || []).forEach(mp => {
-                const mStatus = mp.matches?.status;
-                if (mStatus !== 'finished' && mStatus !== 'playing') return;
-
-                const eid = mp.matches.event_id;
-                if (!matchDetails[eid]) matchDetails[eid] = { games: 0, shuttlecocks: [], billedShuttles: 0 };
-
-                matchDetails[eid].games += 1;
-                const matchObj = Array.isArray(mp.matches) ? mp.matches[0] : mp.matches;
-                const nums = (matchObj?.shuttlecock_numbers || []).map((s: string) => s.trim()).filter(Boolean);
-                matchDetails[eid].shuttlecocks.push(...nums);
-                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                matchDetails[eid].billedShuttles += billedShuttleCount(nums);
-            });
-
-            const history = (epData || []).map((ep: any) => {
-                const detail = matchDetails[ep.event_id] || { games: 0, shuttlecocks: [], billedShuttles: 0 };
-                const amount = Math.max(0, (ep.events?.entry_fee || 0) + ((ep.events?.shuttlecock_price || 0) * detail.billedShuttles) + (ep.additional_cost || 0) - (ep.discount || 0));
-
-                return {
-                    id: ep.id,
-                    eventId: ep.event_id,
-                    eventDate: ep.events?.event_date || '',
-                    amount,
-                    status: ep.payment_status,
-                    paymentMethod: ep.payment_method,
-                    slipUrl: ep.slip_url,
-                    games: detail.games,
-                    shuttlecockCount: detail.billedShuttles,
-                    shuttlecockNums: detail.shuttlecocks.join(', ')
-                };
-            });
-
-            setHistoryData(history);
-        } catch (err) {
-            console.error(err);
-            toast.error('ไม่สามารถโหลดประวัติได้');
+            const rows = await fetchBilling(createClient(), { userId });
+            setHistoryData(rows.map(row => ({
+                id: row.event_player_id, eventId: row.event_id, eventDate: row.event_date,
+                amount: Number(row.total_cost), status: row.payment_status, paymentMethod: row.payment_method,
+                paidAmount: Number(row.total_paid), pendingAmount: Number(row.pending_amount),
+                slipUrl: row.slip_url, games: row.total_games, shuttlecockCount: row.total_shuttlecocks,
+                shuttlecockNums: row.shuttlecock_nums
+            })).sort((first, second) => second.eventDate.localeCompare(first.eventDate)));
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'โหลดประวัติไม่สำเร็จ');
         } finally {
             setLoadingHistory(false);
         }
@@ -329,25 +156,19 @@ export default function AdminBillingPage() {
         }
     }, [selectedEventId, selectedMonth, loadBills]);
 
-        const handleConfirmPayment = async (bill: PlayerBill, method: 'cash' | 'transfer') => {
+    const handleConfirmPayment = async (bill: PlayerBill, method: 'cash' | 'transfer') => {
         setPaymentModalBill(null);
         const supabase = createClient();
-        const { error } = await supabase
-            .from('event_players')
-            .update({ 
-                payment_status: 'paid',
-                payment_method: method
-            })
-            .eq('id', bill.eventPlayerId);
+        const { error } = await savePayment(supabase, bill.eventPlayerId, method, bill.pendingAmount || 0);
 
         if (error) {
-            toast.error('อัปเดตไม่สำเร็จ');
+            toast.error(error.message || 'อัปเดตไม่สำเร็จ');
         } else {
             await logActivity({
                 category: 'payment', action: 'payment.confirm',
-                description: `รับชำระเงินจาก ${bill.displayName} ฿${bill.amount.toFixed(0)} ด้วย${method === 'cash' ? 'เงินสด' : 'การโอน'}`,
+                description: `รับชำระเงินจาก ${bill.displayName} ฿${(bill.pendingAmount || 0).toFixed(2)} ด้วย${method === 'cash' ? 'เงินสด' : 'การโอน'}`,
                 targetType: 'user', targetId: bill.userId,
-                metadata: { method, amount: bill.amount },
+                metadata: { method, amount: bill.pendingAmount || 0 },
             });
             toast.success(`ชำระเงินเรียบร้อยด้วย ${method === 'cash' ? 'เงินสด 💵' : 'โอนเงิน 📱'}`);
             loadBills();
@@ -358,7 +179,7 @@ export default function AdminBillingPage() {
         if (bill.paymentStatus === 'paid') {
             const ok = await confirm({
                 title: 'ยกเลิกการชำระเงิน?',
-                message: `ต้องการเปลี่ยนสถานะของ ${bill.displayName} เป็นยังไม่ได้ชำระเงินใช่หรือไม่?`,
+                message: `ยกเลิกรายการรับเงินทั้งหมด ฿${(bill.totalPaid || 0).toFixed(2)} ของ ${bill.displayName}? การทำรายการนี้ไม่ได้คืนเงินจริง`,
                 type: 'warning',
                 confirmText: 'ยืนยันยกเลิก'
             });
@@ -366,22 +187,16 @@ export default function AdminBillingPage() {
             if (!ok) return;
 
             const supabase = createClient();
-            const { error } = await supabase
-                .from('event_players')
-                .update({ 
-                    payment_status: 'pending',
-                    payment_method: null
-                })
-                .eq('id', bill.eventPlayerId);
+            const { error } = await cancelPayment(supabase, bill.eventPlayerId);
 
             if (error) {
-                toast.error('อัปเดตไม่สำเร็จ');
+                toast.error(error.message || 'อัปเดตไม่สำเร็จ');
             } else {
                 await logActivity({
                     category: 'payment', action: 'payment.unpay',
-                    description: `ยกเลิกการชำระเงินของ ${bill.displayName} (฿${bill.amount.toFixed(0)})`,
+                    description: `ยกเลิกรายการรับเงินของ ${bill.displayName} (฿${(bill.totalPaid || 0).toFixed(2)})`,
                     targetType: 'user', targetId: bill.userId,
-                    metadata: { amount: bill.amount },
+                    metadata: { amount: bill.totalPaid || 0 },
                 });
                 toast.success('เปลี่ยนสถานะเป็นยังไม่จ่าย');
                 loadBills();
@@ -392,22 +207,12 @@ export default function AdminBillingPage() {
     };
 
     if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
+    if (billingError) return <div role="alert" className="card space-y-3"><p className="text-red-700">{billingError}</p><button className="btn btn-primary" onClick={loadBills}>ลองโหลดอีกครั้ง</button></div>;
 
-    const totalPending = bills.filter((b) => b.paymentStatus === 'pending').reduce((s, b) => s + b.amount, 0);
-    const totalPaid = selectedEventId === 'all'
-        ? (bills as any[]).reduce((s, b) => s + (b.totalPaid || 0), 0)
-        : bills.filter((b) => b.paymentStatus === 'paid').reduce((s, b) => s + b.amount, 0);
-        const totalOwed = selectedEventId === 'all'
-        ? (bills as any[]).reduce((s, b) => s + (b.totalOwed || 0), 0)
-        : bills.reduce((s, b) => s + b.amount, 0);
-
-    const transferTotal = selectedEventId === 'all'
-        ? (bills as any[]).reduce((s, b) => s + (b.paymentMethod === 'transfer' ? (b.totalPaid || 0) : 0), 0)
-        : bills.filter((b) => b.paymentStatus === 'paid' && b.paymentMethod === 'transfer').reduce((s, b) => s + b.amount, 0);
-
-    const cashTotal = selectedEventId === 'all'
-        ? (bills as any[]).reduce((s, b) => s + (b.paymentMethod === 'cash' ? (b.totalPaid || 0) : 0), 0)
-        : bills.filter((b) => b.paymentStatus === 'paid' && b.paymentMethod === 'cash').reduce((s, b) => s + b.amount, 0);
+    const totalPending = bills.reduce((sum, bill) => sum + (bill.pendingAmount || 0), 0);
+    const totalPaid = bills.reduce((sum, bill) => sum + (bill.totalPaid || 0), 0);
+    const transferTotal = bills.reduce((sum, bill) => sum + (bill.transferPaid || 0), 0);
+    const cashTotal = bills.reduce((sum, bill) => sum + (bill.cashPaid || 0), 0);
 
     const paidCount = bills.filter((b) => b.paymentStatus === 'paid').length;
     const pendingCount = bills.filter((b) => b.paymentStatus === 'pending').length;
@@ -594,11 +399,11 @@ export default function AdminBillingPage() {
                 {/* Revenue Summary */}
                 <div className="col-span-1 lg:col-span-12 grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
                     {[
-                        { label: 'ยอดค้างชำระรวม', value: `฿${totalPending.toFixed(0)}`, icon: 'solar:wallet-linear', color: 'var(--danger)' },
+                        { label: 'ยอดค้างชำระรวม', value: `฿${totalPending.toFixed(2)}`, icon: 'solar:wallet-linear', color: 'var(--danger)' },
                                                 { 
                             label: 'ชำระแล้วทั้งหมด', 
-                            value: `฿${totalPaid.toFixed(0)}`, 
-                            extra: `โอน ฿${transferTotal.toFixed(0)} | สด ฿${cashTotal.toFixed(0)}`,
+                            value: `฿${totalPaid.toFixed(2)}`,
+                            extra: `โอน ฿${transferTotal.toFixed(2)} | สด ฿${cashTotal.toFixed(2)}`,
                             icon: 'solar:check-circle-linear', 
                             color: 'var(--success)' 
                         },
@@ -650,7 +455,7 @@ export default function AdminBillingPage() {
                     ) : (
                         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                             {/* Table Header */}
-                            <div className="hidden sm:grid grid-cols-12 gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider" style={{ background: 'var(--gray-50)', color: 'var(--gray-500)', borderBottom: '1px solid var(--gray-200)' }}>
+                            <div className="hidden lg:grid grid-cols-12 gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider" style={{ background: 'var(--gray-50)', color: 'var(--gray-500)', borderBottom: '1px solid var(--gray-200)' }}>
                                 <div className="col-span-4">ผู้เล่น</div>
                                 <div className="col-span-1 text-center">เกม</div>
                                 <div className="col-span-1 text-center">ยอดปกติ</div>
@@ -666,9 +471,10 @@ export default function AdminBillingPage() {
                                 // For pagination, we need to base the "show date header" logic on the paginated array
                                 const showDateHeader = selectedEventId === 'all' && bill.eventDate && (index === 0 || bill.eventDate !== paginatedBills[index - 1].eventDate);
                                 // ยอดค้างจริง: all-view = ยอดค้างสะสม, daily-view = จ่ายแล้วถือเป็น 0
-                                const pendingAmount = selectedEventId === 'all' ? bill.amount : (bill.paymentStatus === 'paid' ? 0 : bill.amount);
+                                const pendingAmount = bill.pendingAmount || 0;
                                 return (
                                     <React.Fragment key={bill.userId + (bill.eventPlayerId || index)}>
+                                        {(bill.missingShuttleMatches || 0) > 0 && <div className="bg-amber-50 px-5 py-3 text-sm text-amber-900" role="status">{bill.displayName}: รอตรวจเลขลูก {bill.missingShuttleMatches} แมตช์ · ยอดยังเป็นประมาณการ <a className="underline font-bold" href={`/dashboard/admin/matches/${bill.eventId}`}>ตรวจแมตช์</a></div>}
                                         {showDateHeader && (
                                             <div className="px-5 py-2 flex items-center gap-2" style={{ background: 'var(--orange-50)', borderBottom: '1px solid var(--orange-100)' }}>
                                                 <Icon icon="solar:calendar-date-bold" width={16} className="text-orange-600" />
@@ -678,14 +484,14 @@ export default function AdminBillingPage() {
                                             </div>
                                         )}
                                         <div
-                                            className="grid grid-cols-1 sm:grid-cols-12 gap-2 px-5 py-4 items-center"
+                                            className="grid grid-cols-1 lg:grid-cols-12 gap-2 px-5 py-4 items-center"
                                             style={{
                                                 borderBottom: index < bills.length - 1 ? '1px solid var(--gray-100)' : 'none',
                                                 background: bill.paymentStatus === 'paid' ? 'rgba(22, 163, 74, 0.02)' : 'transparent',
                                             }}
                                         >
                                             {/* Player */}
-                                            <div className="sm:col-span-4 flex items-center gap-3">
+                                            <div className="lg:col-span-4 flex items-center gap-3">
                                                 <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: 'var(--gray-900)', color: 'var(--white)' }}>
                                                     {bill.displayName.charAt(0).toUpperCase()}
                                                 </div>
@@ -693,27 +499,30 @@ export default function AdminBillingPage() {
                                                     <p className="text-sm font-bold truncate" style={{ color: 'var(--gray-900)' }}>
                                                         {truncateName(bill.displayName, 16)}
                                                     </p>
-                                                    <p className="text-[11px] sm:hidden" style={{ color: 'var(--gray-500)' }}>
-                                                        {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''}{(bill.additionalCost || 0) > 0 ? ` · +฿${bill.additionalCost}` : ''} · ค้าง ฿{pendingAmount.toFixed(0)}
+                                                    <p className="text-[11px] lg:hidden" style={{ color: 'var(--gray-500)' }}>
+                                                        {bill.gamesPlayed} เกม {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? `(${bill.shuttlecockCount} ลูก)` : ''}{(bill.additionalCost || 0) > 0 ? ` · +฿${bill.additionalCost}` : ''} · ค้าง ฿{pendingAmount.toFixed(2)}
                                                     </p>
                                                 </div>
                                             </div>
 
                                             {/* Games */}
-                                            <div className="hidden sm:flex flex-col col-span-1 items-center justify-center">
+                                            <div className="hidden lg:flex flex-col col-span-1 items-center justify-center">
                                                 <span className="text-sm font-medium" style={{ color: 'var(--gray-700)' }}>{bill.gamesPlayed} เกม</span>
+                                                {(bill.missingShuttleMatches || 0) > 0 && <span className="text-xs text-amber-700">รอตรวจเลขลูก {bill.missingShuttleMatches} แมตช์</span>}
+                                                {(bill.creditAmount || 0) > 0 && <span className="text-xs text-blue-700">รับเกินยอด ฿{bill.creditAmount?.toFixed(2)}</span>}
+                                                {bill.importedPayment && <span className="text-xs text-gray-500">ยอดรับยกมาจากระบบเดิม</span>}
                                                 {bill.shuttlecockCount && bill.shuttlecockCount > 0 ? (
                                                     <span className="text-[10px] font-bold" style={{ color: 'var(--gray-400)' }}>{bill.shuttlecockCount} ลูก</span>
                                                 ) : null}
                                             </div>
 
                                             {/* Base Amount (before additional/discount) */}
-                                            <div className="hidden sm:flex col-span-1 justify-center">
-                                                <span className="text-sm font-medium" style={{ color: 'var(--gray-700)' }}>฿{(bill.baseAmount || 0).toFixed(0)}</span>
+                                            <div className="hidden lg:flex col-span-1 justify-center">
+                                                <span className="text-sm font-medium" style={{ color: 'var(--gray-700)' }}>฿{(bill.baseAmount || 0).toFixed(2)}</span>
                                             </div>
 
                                             {/* Adjustments (เพิ่ม / ลด) รวมเป็นคอลัมน์เดียว */}
-                                            <div className="hidden sm:flex flex-col col-span-1 items-center justify-center leading-tight gap-0.5">
+                                            <div className="hidden lg:flex flex-col col-span-1 items-center justify-center leading-tight gap-0.5">
                                                 {(bill.additionalCost || 0) > 0 && (
                                                     <span className="text-xs font-bold" style={{ color: 'var(--danger)' }}>+฿{bill.additionalCost}</span>
                                                 )}
@@ -726,30 +535,30 @@ export default function AdminBillingPage() {
                                             </div>
 
                                             {/* Grand Total (All view) / Amount (Daily view) */}
-                                            <div className="hidden sm:flex col-span-1 justify-center">
+                                            <div className="hidden lg:flex col-span-1 justify-center">
                                                 <span className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>
-                                                    ฿{(selectedEventId === 'all' ? (bill.totalOwed || 0) : bill.amount).toFixed(0)}
+                                                    ฿{(selectedEventId === 'all' ? (bill.totalOwed || 0) : bill.amount).toFixed(2)}
                                                 </span>
                                             </div>
 
                                             {/* ค้างชำระ (จ่ายแล้ว = 0) */}
-                                            <div className="hidden sm:flex col-span-1 justify-center">
+                                            <div className="hidden lg:flex col-span-1 justify-center">
                                                 <span className="text-sm font-bold" style={{ color: pendingAmount > 0 ? 'var(--danger)' : 'var(--success)' }}>
-                                                    ฿{pendingAmount.toFixed(0)}
+                                                    ฿{pendingAmount.toFixed(2)}
                                                 </span>
                                             </div>
 
                                                                                         {/* Status */}
-                                            <div className="hidden sm:flex col-span-1 justify-center">
+                                            <div className="hidden lg:flex col-span-1 justify-center">
                                                 <span className={`badge ${bill.paymentStatus === 'paid' ? 'badge-success' : 'badge-warning'}`}>
                                                     {bill.paymentStatus === 'paid' ? (bill.paymentMethod === 'transfer' ? 'โอนเงิน 📱' : bill.paymentMethod === 'cash' ? 'เงินสด 💵' : 'จ่ายครบแล้ว') : 'มียอดค้าง'}
                                                 </span>
                                             </div>
 
                                             {/* Actions */}
-                                            <div className="sm:col-span-2 flex items-center justify-end sm:justify-center gap-2 mt-2 sm:mt-0">
+                                            <div className="lg:col-span-2 flex items-center justify-end sm:justify-center gap-2 mt-2 sm:mt-0">
                                                                                                 {/* Mobile status badge */}
-                                                <span className={`badge sm:hidden ${bill.paymentStatus === 'paid' ? 'badge-success' : 'badge-warning'}`}>
+                                                <span className={`badge lg:hidden ${bill.paymentStatus === 'paid' ? 'badge-success' : 'badge-warning'}`}>
                                                     {bill.paymentStatus === 'paid' ? (bill.paymentMethod === 'transfer' ? 'โอนเงิน 📱' : bill.paymentMethod === 'cash' ? 'เงินสด 💵' : 'จ่ายครบแล้ว') : selectedEventId === 'all' ? 'มียอดค้าง' : 'ยังไม่จ่าย'}
                                                 </span>
                                                 <div className="flex items-center gap-2 ml-auto sm:ml-0">
@@ -866,8 +675,9 @@ export default function AdminBillingPage() {
                                                 </div>
                                                 <div>
                                                     <p className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>
-                                                        ฿{item.amount.toFixed(0)}
+                                                        ฿{item.amount.toFixed(2)}
                                                     </p>
+                                                    <p className="text-xs text-gray-500">รับแล้ว ฿{item.paidAmount.toFixed(2)} · ค้าง ฿{item.pendingAmount.toFixed(2)}</p>
                                                     <p className="text-[11px]" style={{ color: 'var(--gray-500)' }}>
                                                         {item.games} เกม {item.shuttlecockCount > 0 && `· ลูกที่ใช้: ${item.shuttlecockCount} ลูก (${item.shuttlecockNums})`}
                                                     </p>
@@ -928,7 +738,7 @@ export default function AdminBillingPage() {
                             <div>
                                 <h3 className="text-base font-bold text-gray-950">เลือกวิธีการชำระเงิน</h3>
                                 <p className="text-xs text-gray-500 font-medium">
-                                    {paymentModalBill.displayName} • ยอดชำระ ฿{paymentModalBill.amount.toLocaleString()}
+                                    {paymentModalBill.displayName} • ยอดชำระ ฿{(paymentModalBill.pendingAmount || 0).toLocaleString()}
                                 </p>
                             </div>
                         </div>

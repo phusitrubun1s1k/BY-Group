@@ -38,6 +38,7 @@ interface BillingHistory {
     games_played: number;
     payment_status: string;
     total_amount: number;
+    total_paid?: number;
 }
 
 interface MMRHistory {
@@ -229,7 +230,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                 const { data: summary } = await supabase.from('view_billing_summary').select('*').eq('event_date', today).eq('user_id', targetUserId).maybeSingle();
                 if (summary) {
                     setTodayBill({
-                        amount: summary.total_cost || summary.total_amount || 0,
+                        amount: Number(summary.pending_amount ?? summary.total_cost ?? summary.total_amount ?? 0),
                         paid: summary.payment_status === 'paid',
                         eventPlayerId: summary.event_player_id || summary.id,
                         totalGames: summary.total_games || 0,
@@ -268,7 +269,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             if (uploadError) throw uploadError;
 
             const { data: { publicUrl } } = supabase.storage.from('slips').getPublicUrl(fileName);
-            const { error: updateError } = await supabase.from('event_players').update({ slip_url: publicUrl, payment_status: 'pending' }).eq('id', todayBill.eventPlayerId);
+            const { error: updateError } = await supabase.from('event_players').update({ slip_url: publicUrl }).eq('id', todayBill.eventPlayerId);
             if (updateError) throw updateError;
 
             setTodayBill(prev => ({ ...prev, slipUrl: publicUrl }));
@@ -286,7 +287,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             const monthYear = date.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
             if (!groups[monthYear]) groups[monthYear] = { monthYear, items: [], totalPaid: 0 };
             groups[monthYear].items.push(item);
-            if (item.payment_status === 'paid') groups[monthYear].totalPaid += Number(item.total_amount);
+            groups[monthYear].totalPaid += Number(item.total_paid ?? 0);
         });
         return Object.values(groups).sort((a, b) => new Date(b.items[0].event_date).getTime() - new Date(a.items[0].event_date).getTime());
     }, [billingHistory]);
@@ -365,11 +366,11 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                                                 ระดับมือ {profile.skill_level}
                                             </span>
                                         )}
-                                        <RankBadge mmr={profile.mmr || 1000} size="sm" />
+                                        <RankBadge mmr={profile.mmr ?? 1000} size="sm" />
                                     </div>
                                     <div className="mt-4 max-w-[200px]">
                                         {(() => {
-                                            const { rank: nextRank, progress } = getNextRank(profile.mmr || 1000);
+                                            const { rank: nextRank, progress } = getNextRank(profile.mmr ?? 1000);
                                             return (
                                                 <div className="space-y-1.5">
                                                     <div className="flex justify-between items-end">
@@ -438,7 +439,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">อ้างอิงจากแมตช์ล่าสุด</p>
                     </div>
                     <div className="text-right">
-                        <p className="text-2xl font-black text-gray-900 leading-none">{profile.mmr || 1000}</p>
+                        <p className="text-2xl font-black text-gray-900 leading-none">{profile.mmr ?? 1000}</p>
                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mt-1">Current Rating</p>
                     </div>
                 </div>

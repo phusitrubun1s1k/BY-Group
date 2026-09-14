@@ -8,7 +8,8 @@ import Link from 'next/link';
 import { Icon } from '@iconify/react';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
-import { billedShuttleCount } from '@/src/lib/utils/billing';
+import { fetchBilling, savePayment, cancelPayment } from '@/src/lib/utils/billing-data';
+import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
 
 export default function EventHistoryPage({ params }: { params: Promise<{ id: string }> }) {
     const [event, setEvent] = useState<Event | null>(null);
@@ -16,6 +17,8 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
     const [eventPlayers, setEventPlayers] = useState<EventPlayer[]>([]);
     const [loading, setLoading] = useState(true);
     const [updatingPayment, setUpdatingPayment] = useState<string | null>(null);
+    const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer' | ''>('');
+    const [isAdmin, setIsAdmin] = useState(false);
     const [showPaymentSection, setShowPaymentSection] = useState(true);
     const [scoreMatch, setScoreMatch] = useState<Match | null>(null);
     const [winner, setWinner] = useState<'A' | 'B' | 'Draw' | 'None' | null>(null);
@@ -38,6 +41,11 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
 
     const loadData = async (id: string) => {
         const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+            setIsAdmin(profile?.role === 'admin');
+        }
         const [eventRes, matchesRes, playersRes] = await Promise.all([
             supabase.from('events').select('*').eq('id', id).single(),
             supabase.from('matches').select('*, match_players(*, profiles(*))').eq('event_id', id).order('created_at', { ascending: true }),
@@ -65,8 +73,7 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                 totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
             });
 
-            const amount = (event.entry_fee || 0) + totalShuttleCost + (p.additional_cost || 0) - (p.discount || 0);
-            bills[p.user_id] = Math.max(0, amount);
+            bills[p.user_id] = calculateBill(event.entry_fee || 0, 1, totalShuttleCost, p.additional_cost || 0, p.discount || 0);
         });
         return bills;
     }, [eventPlayers, matches, event]);
@@ -90,35 +97,40 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
 
 
     const togglePaymentStatus = async (ep: EventPlayer) => {
-        if (!event?.id) return;
-
-        const amount = userBills[ep.user_id] || 0;
-        const msg = ep.payment_status === 'pending'
-            ? `ยืนยันว่าได้รับเงิน จำนวน ฿${amount.toLocaleString()} จาก ${ep.profiles?.display_name} แล้ว?`
-            : `เปลี่ยนสถานะของ ${ep.profiles?.display_name} เป็นยังไม่จ่ายเงิน?`;
-
-        const ok = await confirm({
-            title: 'ยืนยันการเปลี่ยนสถานะ',
-            message: msg,
-            type: ep.payment_status === 'pending' ? 'info' : 'warning',
-            confirmText: 'ยืนยัน'
-        });
-
-        if (!ok) return;
-
-        setUpdatingPayment(ep.user_id);
-        const supabase = createClient();
-        const newStatus = ep.payment_status === 'pending' ? 'paid' : 'pending';
-
-        const { error } = await supabase.from('event_players').update({ payment_status: newStatus }).eq('id', ep.id);
-
-        if (error) {
-            toast.error('เกิดข้อผิดพลาด: ' + error.message);
-        } else {
-            toast.success('อัปเดตสถานะสำเร็จ');
-            loadData(event.id);
+        if (!event?.id || !isAdmin || updatingPayment) return;
+        if (ep.payment_status === 'pending' && !paymentMethod) {
+            toast.error('กรุณาเลือกช่องทางรับเงินก่อน');
+            return;
         }
-        setUpdatingPayment(null);
+        setUpdatingPayment(ep.user_id);
+        try {
+            const supabase = createClient();
+            const rows = await fetchBilling(supabase, { eventId: event.id, userId: ep.user_id });
+            const bill = rows[0];
+            if (!bill) throw new Error('ไม่พบข้อมูลบิล กรุณาโหลดใหม่');
+            const receiving = bill.payment_status === 'pending';
+            if (receiving && !paymentMethod) throw new Error('กรุณาเลือกช่องทางรับเงินก่อน');
+            if (receiving && bill.missing_shuttle_matches > 0) throw new Error('กรุณาแก้หมายเลขลูกที่ขาดก่อนรับเงิน');
+            const ok = await confirm({
+                title: receiving ? 'ยืนยันรับเงิน' : 'ยกเลิกรายการรับเงิน',
+                message: receiving
+                    ? `ได้รับ ${paymentMethod === 'cash' ? 'เงินสด' : 'เงินโอน'} ฿${Number(bill.pending_amount).toFixed(2)} จาก ${ep.profiles?.display_name} แล้วใช่ไหม?`
+                    : `ยกเลิกรายการรับเงินทั้งหมด ฿${Number(bill.total_paid).toFixed(2)} ของ ${ep.profiles?.display_name}? การทำรายการนี้ไม่ได้คืนเงินจริง`,
+                type: receiving ? 'info' : 'warning',
+                confirmText: receiving ? 'ได้รับเงินจริงแล้ว' : 'ยกเลิกรายการ'
+            });
+            if (!ok) return;
+            const { error } = receiving
+                ? await savePayment(supabase, ep.id, paymentMethod as 'cash' | 'transfer', Number(bill.pending_amount))
+                : await cancelPayment(supabase, ep.id);
+            if (error) throw error;
+            toast.success('บันทึกรายการสำเร็จ');
+            await loadData(event.id);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : (error as { message?: string }).message || 'บันทึกรายการไม่สำเร็จ');
+        } finally {
+            setUpdatingPayment(null);
+        }
     };
 
     const submitScore = async () => {
@@ -139,11 +151,8 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
         if (!ok) return;
 
         const supabase = createClient();
-        await supabase.from('matches').update({
-            status: 'finished',
-            team_a_score: totalA,
-            team_b_score: totalB,
-        }).eq('id', scoreMatch.id);
+        const { error } = await supabase.rpc('finish_match', { p_match_id: scoreMatch.id, p_score_a: totalA, p_score_b: totalB, p_expected_updated_at: scoreMatch.updated_at || null });
+        if (error) { toast.error(error.message); return; }
 
         toast.success(isNone ? 'บันทึกสำเร็จ! (ไม่แจ้งผลแข่ง)' : (isDraw ? 'บันทึกสำเร็จ! เสมอ 🤝' : `บันทึกสำเร็จ! ทีม ${winner} ชนะ 🏆`));
         setScoreMatch(null);
@@ -265,7 +274,7 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                                             จ่ายแล้ว {eventPlayers.filter(p => p.payment_status === 'paid').length}/{eventPlayers.length} คน
                                         </p>
                                         <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(22,163,74,0.1)', color: 'var(--success)' }}>
-                                            ยอดเก็บแล้ว ฿{eventPlayers.reduce((sum, p) => sum + (p.payment_status === 'paid' ? (userBills[p.user_id] || 0) : 0), 0).toLocaleString()}
+                                            ยอดเก็บแล้ว ฿{eventPlayers.reduce((sum, p) => sum + (p.paid_amount || 0), 0).toLocaleString()}
                                         </span>
                                         <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6' }}>
                                             ยอดทั้งหมด ฿{eventPlayers.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}
@@ -285,6 +294,14 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
 
                         {showPaymentSection && (
                             <div>
+                                {isAdmin && <label className="flex flex-wrap items-center gap-2 border-b p-4 text-sm">
+                                    ช่องทางรับเงิน
+                                    <select aria-label="ช่องทางรับเงิน" className="input" value={paymentMethod} onChange={event => setPaymentMethod(event.target.value as 'cash' | 'transfer' | '')}>
+                                        <option value="">เลือกก่อนรับเงิน</option>
+                                        <option value="cash">เงินสด</option>
+                                        <option value="transfer">โอนเงิน</option>
+                                    </select>
+                                </label>}
                                 {/* Sort: pending first, then paid */}
                                 {[...eventPlayers]
                                     .sort((a, b) => {
@@ -297,7 +314,7 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                                         return (
                                             <div
                                                 key={ep.id}
-                                                className="flex items-center justify-between px-5 py-3 transition-colors hover:bg-gray-50/50"
+                                                className="flex flex-wrap gap-3 items-center justify-between px-5 py-3 transition-colors hover:bg-gray-50/50"
                                                 style={{
                                                     borderBottom: index < eventPlayers.length - 1 ? '1px solid var(--gray-100)' : 'none',
                                                     background: isPaid ? 'rgba(22, 163, 74, 0.02)' : 'transparent',
@@ -315,12 +332,15 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
                                                 <div className="flex items-center gap-2 shrink-0 ml-2">
                                                     <span className="text-sm font-bold" style={{ color: 'var(--gray-700)' }}>
                                                         ฿{(userBills[ep.user_id] || 0).toLocaleString()}
+                                                        <span className="block text-xs font-normal">รับแล้ว ฿{(ep.paid_amount || 0).toLocaleString()} · ค้าง ฿{Math.max(0, (userBills[ep.user_id] || 0) - (ep.paid_amount || 0)).toFixed(2)}</span>
                                                     </span>
                                                     <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'}`}>
                                                         {isPaid ? 'จ่ายแล้ว' : 'ยังไม่จ่าย'}
                                                     </span>
                                                     <button
-                                                        disabled={isUpdating}
+                                                        hidden={!isAdmin}
+                                                        aria-label={isPaid ? "ยกเลิกรายการรับเงิน" : "รับเงินส่วนที่ค้าง"}
+                                                        disabled={isUpdating || (!isPaid && !paymentMethod)}
                                                         onClick={() => togglePaymentStatus(ep)}
                                                         className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors ml-1 disabled:opacity-50"
                                                         style={{

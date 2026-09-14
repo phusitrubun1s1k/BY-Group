@@ -359,7 +359,7 @@ export default function UserManagementPage() {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <RankBadge mmr={user.mmr || 1000} size="sm" />
+                                            <RankBadge mmr={user.mmr ?? 1000} size="sm" />
                                         </td>
                                         <td className="px-6 py-4 text-center">
                                             <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-50 text-gray-600 border border-gray-100">
@@ -514,7 +514,7 @@ export default function UserManagementPage() {
                                                 ระดับ {selectedUserDetail.skill_level}
                                             </span>
                                         )}
-                                        <RankBadge mmr={selectedUserDetail.mmr || 1000} size="sm" />
+                                        <RankBadge mmr={selectedUserDetail.mmr ?? 1000} size="sm" />
                                     </div>
                                 </div>
                             </div>

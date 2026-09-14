@@ -23,3 +23,8 @@ export function billedShuttleCount(shuttlecockNumbers?: readonly (string | null 
         .filter(Boolean).length;
     return Math.max(1, valid);
 }
+
+export function calculateBill(entryFee: number, price: number, shuttleCount: number, additionalCost = 0, discount = 0): number {
+    const total = entryFee + price * shuttleCount + additionalCost - discount;
+    return Math.max(0, Math.round((total + Number.EPSILON * Math.max(1, Math.abs(total))) * 100) / 100);
+}
