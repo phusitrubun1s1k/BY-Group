@@ -91,9 +91,9 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 .from('rank_reset_schedule')
                 .select('reset_at, executed_at')
                 .eq('status', 'executed')
-                .order('executed_at', { ascending: false })
+                .order('reset_at', { ascending: false })
                 .limit(1);
-            const resetDate = resets && resets[0] ? (resets[0].executed_at || resets[0].reset_at) : '1970-01-01T00:00:00Z';
+            const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
 
             // 2. Fetch all closed events after this reset date
             const { data: closedEvents } = await supabase

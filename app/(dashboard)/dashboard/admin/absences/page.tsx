@@ -90,9 +90,9 @@ export default function AdminAbsencesPage() {
                 .from('rank_reset_schedule')
                 .select('reset_at, executed_at')
                 .eq('status', 'executed')
-                .order('executed_at', { ascending: false })
+                .order('reset_at', { ascending: false })
                 .limit(1);
-            const resetDateStr = resets && resets[0] ? (resets[0].executed_at || resets[0].reset_at) : '1970-01-01T00:00:00Z';
+            const resetDateStr = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
             setLatestResetDate(resetDateStr);
 
             // 4. Fetch all closed events

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/src/lib/supabase/client';
 import { Icon } from '@iconify/react';
 import { RANK_TIERS } from '@/src/lib/rank-utils';
@@ -24,7 +24,7 @@ interface SeasonRecord {
     final_rank_name: string;
     total_games: number;
     total_wins: number;
-    profiles?: { display_name: string };
+    profiles?: { display_name: string; is_guest?: boolean };
 }
 
 export default function AdminRankResetPage() {
@@ -42,18 +42,24 @@ export default function AdminRankResetPage() {
     const [seasonRecords, setSeasonRecords] = useState<SeasonRecord[]>([]);
     const [loadingSeason, setLoadingSeason] = useState(false);
 
-    useEffect(() => { loadSchedules(); }, []);
-
-    const loadSchedules = async () => {
+    const loadSchedules = useCallback(async () => {
         setLoading(true);
         const supabase = createClient();
-        const { data } = await supabase
+        const scheduleResult = await supabase
             .from('rank_reset_schedule')
             .select('*')
             .order('created_at', { ascending: false });
-        setSchedules((data || []) as ResetSchedule[]);
+
+        if (scheduleResult.error) toast.error(`โหลดรายการรีแรงค์ไม่สำเร็จ: ${scheduleResult.error.message}`);
+
+        setSchedules((scheduleResult.data || []) as ResetSchedule[]);
         setLoading(false);
-    };
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void loadSchedules(); }, 0);
+        return () => window.clearTimeout(timer);
+    }, [loadSchedules]);
 
     const loadSeasonHistory = async (seasonLabel: string) => {
         setLoadingSeason(true);
@@ -64,13 +70,20 @@ export default function AdminRankResetPage() {
             .select('*, profiles:user_id(display_name, is_guest)')
             .eq('season_label', seasonLabel)
             .order('final_mmr', { ascending: false });
-        setSeasonRecords(((data || []) as any[]).filter((r: any) => !r.profiles?.is_guest) as SeasonRecord[]);
+        const records = (data || []) as unknown as SeasonRecord[];
+        setSeasonRecords(records.filter(record => !record.profiles?.is_guest));
         setLoadingSeason(false);
     };
 
     const handleSchedule = () => {
         if (!resetDate || !seasonLabel) {
             toast.error('กรุณากรอกวันที่และชื่อซีซัน');
+            return;
+        }
+        const inputYear = Number(resetDate.slice(0, 4));
+        const currentYear = new Date().getFullYear();
+        if (!Number.isInteger(inputYear) || inputYear < currentYear - 1 || inputYear > currentYear + 5) {
+            toast.error(`กรุณากรอกปี ค.ศ. ใกล้เคียงปี ${currentYear} เช่น ${currentYear} ไม่ใช่ปี พ.ศ.`);
             return;
         }
         setPendingAction('schedule');
@@ -105,6 +118,7 @@ export default function AdminRankResetPage() {
             return;
         }
 
+        let actionSucceeded = false;
         if (pendingAction === 'schedule') {
             const resetAt = new Date(`${resetDate}T${resetTime}:00`).toISOString();
             const { error } = await supabase.from('rank_reset_schedule').insert({
@@ -125,17 +139,20 @@ export default function AdminRankResetPage() {
                 setResetDate('');
                 setResetTime('00:00');
                 setSeasonLabel('');
+                actionSucceeded = true;
             }
         } else if (pendingAction === 'execute' && executeTargetId) {
-            await executeReset(executeTargetId, user.id);
+            actionSucceeded = await executeReset(executeTargetId, user.id);
         } else if (pendingAction === 'cancel' && executeTargetId) {
-            await runCancel(executeTargetId);
+            actionSucceeded = await runCancel(executeTargetId);
         }
 
-        setShowPasswordModal(false);
-        setPassword('');
-        setPendingAction(null);
-        setExecuteTargetId(null);
+        if (actionSucceeded) {
+            setShowPasswordModal(false);
+            setPassword('');
+            setPendingAction(null);
+            setExecuteTargetId(null);
+        }
         setSubmitting(false);
         loadSchedules();
     };
@@ -146,24 +163,27 @@ export default function AdminRankResetPage() {
             p_schedule_id: scheduleId,
             p_rank_tiers: RANK_TIERS.map(rank => ({ name: rank.name, minMMR: rank.minMMR }))
         });
-        if (error) { toast.error(error.message); return; }
+        if (error) { toast.error(`รีแรงค์ไม่สำเร็จ: ${error.message}`); return false; }
         await logActivity({
             category: 'rank', action: 'rank.reset_execute',
             description: 'รีเซ็ตซีซันและบันทึกประวัติเรียบร้อยแล้ว',
             targetType: 'rank_reset', targetId: scheduleId, metadata: { userId }
         });
         toast.success('รีเซ็ตซีซันสำเร็จ');
+        return true;
     };
 
     const runCancel = async (scheduleId: string) => {
         const supabase = createClient();
-        await supabase.from('rank_reset_schedule').update({ status: 'cancelled' }).eq('id', scheduleId);
+        const { error } = await supabase.from('rank_reset_schedule').update({ status: 'cancelled' }).eq('id', scheduleId);
+        if (error) { toast.error(`ยกเลิกไม่สำเร็จ: ${error.message}`); return false; }
         await logActivity({
             category: 'rank', action: 'rank.reset_cancel',
             description: 'ยกเลิกการตั้งเวลารีแรงค์',
             targetType: 'rank_reset', targetId: scheduleId,
         });
         toast.success('ยกเลิกการตั้งเวลาแล้ว');
+        return true;
     };
 
     const pendingSchedule = schedules.find(s => s.status === 'pending');
@@ -197,6 +217,14 @@ export default function AdminRankResetPage() {
                     <p className="text-sm font-bold text-gray-700 mb-4">
                         📅 {new Date(pendingSchedule.reset_at).toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })}
                     </p>
+                    {new Date(pendingSchedule.reset_at).getFullYear() > new Date().getFullYear() + 5 && (
+                        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700">
+                            ปีที่ตั้งไว้ดูผิดปกติ ระบบอ่านเป็นปี ค.ศ. {new Date(pendingSchedule.reset_at).getFullYear()} หากกดรีเดี๋ยวนี้ ระบบจะใช้เวลาปัจจุบันเป็นวันตัดรอบ หรือยกเลิกแล้วสร้างใหม่ด้วยปี ค.ศ.
+                        </div>
+                    )}
+                    <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs font-semibold text-orange-700">
+                        ระบบจะรีเฉพาะแต้มถึงวันตัดรอบ และคำนวณผลแมตช์หลังวันตัดกลับเข้าไปในซีซันใหม่ แต้มหลังวันตัดจึงไม่หาย
+                    </div>
                     <div className="flex gap-2">
                         <button
                             onClick={() => handleExecuteNow(pendingSchedule.id)}
@@ -276,6 +304,9 @@ export default function AdminRankResetPage() {
                             <Icon icon="solar:lock-password-bold" width={18} />
                             ตั้งเวลารีแรงค์ (ยืนยันรหัสผ่าน)
                         </button>
+                        <p className="text-center text-[11px] font-medium text-gray-400">
+                            หากกดหลังวันที่ตั้ง ระบบใช้วันที่ตั้งเป็นวันตัดรอบ; หากกดก่อน ระบบใช้เวลาที่กดเป็นวันตัดรอบ
+                        </p>
                     </div>
                 </div>
             )}

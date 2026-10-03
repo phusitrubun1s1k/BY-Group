@@ -57,7 +57,7 @@ export default function ConfirmModal({
                     </div>
 
                     <h3 className="text-xl font-bold text-gray-900 mb-2">{title}</h3>
-                    <p className="text-sm text-gray-500 leading-relaxed">{message}</p>
+                    <p className="text-sm text-gray-500 leading-relaxed whitespace-pre-line">{message}</p>
                 </div>
 
                 <div className="flex border-t border-gray-100 p-4 gap-3 bg-gray-50/50">

@@ -90,7 +90,7 @@ export default function LeaderboardPage() {
             setPastSeasons(executedResets.map(r => ({
                 label: r.season_label,
                 resetId: r.id,
-                resetAt: r.executed_at || r.reset_at
+                resetAt: r.reset_at
             })));
         }
 
@@ -186,9 +186,9 @@ export default function LeaderboardPage() {
                 .from('rank_reset_schedule')
                 .select('reset_at, executed_at')
                 .eq('status', 'executed')
-                .order('executed_at', { ascending: false })
+                .order('reset_at', { ascending: false })
                 .limit(1);
-            const resetDate = resets && resets[0] ? (resets[0].executed_at || resets[0].reset_at) : '1970-01-01T00:00:00Z';
+            const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
 
             // เช็ค "กลับเข้าอันดับทันที": นับจากการเล่นแมตช์ที่จบแล้ว (กดชนะ/แพ้/เสมอ = คำนวณแต้ม)
             // หลังรีแรงค์ล่าสุด ไม่ต้องรอ admin ปิดก๊วน — พอมีผลแมตช์ก็โผล่กลับมาในอันดับเลย

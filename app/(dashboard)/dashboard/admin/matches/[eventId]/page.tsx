@@ -45,6 +45,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [event, setEvent] = useState<Event | null>(null);
         const [players, setPlayers] = useState<EventPlayer[]>([]);
     const [paymentModalPlayer, setPaymentModalPlayer] = useState<EventPlayer | null>(null);
+    const [activeSection, setActiveSection] = useState<'matches' | 'finance'>('matches');
+    const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'paid'>('all');
     const [matchFilter, setMatchFilter] = useState<'all' | 'waiting' | 'playing' | 'finished'>('all');
     const [matches, setMatches] = useState<Match[]>([]);
     const [loading, setLoading] = useState(true);
@@ -70,7 +72,6 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
     const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
     const [updatingPayment, setUpdatingPayment] = useState<string | null>(null);
-    const [showPaymentSection, setShowPaymentSection] = useState(true);
     const [sidebarTeam, setSidebarTeam] = useState<'A' | 'B' | null>(null);
     const [showPlayersSidebar, setShowPlayersSidebar] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -177,22 +178,30 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         });
     }, [params]);
 
+    useEffect(() => {
+        let active = true;
+        createClient().auth.getUser().then(({ data }) => {
+            if (active) setCurrentUserId(data.user?.id || null);
+        }).catch(error => {
+            if (error?.name !== 'AbortError') console.error('Unable to load current user', error);
+        });
+        return () => { active = false; };
+    }, []);
+
     const loadData = useCallback(async (id: string) => {
         const supabase = createClient();
-        const [eventRes, playersRes, matchesRes, userRes, financialRows] = await Promise.all([
+        const [eventRes, playersRes, matchesRes, financialRows] = await Promise.all([
             supabase.from('events').select('*').eq('id', id).single(),
             supabase.from('event_players').select('*, profiles(*)').eq('event_id', id).order('created_at'),
             supabase.from('matches').select('*, match_players(*, profiles(*))').eq('event_id', id).order('created_at', { ascending: true }),
-            supabase.auth.getUser(),
             fetchBilling(supabase, { eventId: id }).catch(error => { setBillingError(error.message); return null; })
         ]);
         if (financialRows) { setBillingRows(financialRows); setBillingError(''); }
         if (eventRes.data) setEvent(eventRes.data as Event);
         if (playersRes.data) setPlayers(playersRes.data as EventPlayer[]);
         if (matchesRes.data) setMatches(matchesRes.data as Match[]);
-        if (userRes.data.user) setCurrentUserId(userRes.data.user.id);
         setLoading(false);
-    }, [event]);
+    }, []);
 
     const handleAddGuest = async () => {
         if (!guestName.trim()) return toast.error('กรุณาระบุชื่อ');
@@ -676,36 +685,91 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         }
     };
 
-    const updateDiscount = async (ep: EventPlayer, discountValue: number) => {
-        // Optimistic update
-        setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, discount: discountValue } : p));
+    const confirmPaidBillAdjustment = async (
+        ep: EventPlayer,
+        label: string,
+        previousValue: number,
+        nextValue: number,
+        totalDifference: number
+    ) => {
+        if (ep.payment_status !== 'paid') return true;
+        const profile = ep.profiles as unknown as Profile;
+        const billing = billingRows.find(row => row.event_player_id === ep.id);
+        const currentTotal = Number(billing?.total_cost ?? userBills[ep.user_id] ?? 0);
+        const nextTotal = Math.max(0, Math.round((currentTotal + totalDifference) * 100) / 100);
+        const paidAmount = Number(billing?.total_paid ?? ep.paid_amount ?? 0);
+        const paymentNotice = nextTotal > paidAmount
+            ? `หลังบันทึกจะมียอดค้าง ฿${(nextTotal - paidAmount).toLocaleString()} และสถานะจะกลับเป็น “ค้างชำระ”`
+            : nextTotal < paidAmount
+                ? `หลังบันทึกจะมียอดชำระเกิน ฿${(paidAmount - nextTotal).toLocaleString()}`
+                : 'ยอดชำระจะพอดีกับยอดบิลใหม่';
 
+        return confirm({
+            title: 'ยืนยันแก้ไขยอดที่ชำระแล้ว?',
+            message: `${profile?.display_name || 'ผู้เล่น'} ชำระแล้ว ฿${paidAmount.toLocaleString()}\n${label}: ฿${previousValue.toLocaleString()} → ฿${nextValue.toLocaleString()}\nยอดบิลใหม่ ฿${nextTotal.toLocaleString()}\n${paymentNotice}`,
+            type: 'warning',
+            confirmText: 'บันทึกยอดใหม่'
+        });
+    };
+
+    const updateDiscount = async (ep: EventPlayer, discountValue: number) => {
+        const previousValue = Number(ep.discount || 0);
+        const confirmed = await confirmPaidBillAdjustment(ep, 'ส่วนลด', previousValue, discountValue, previousValue - discountValue);
+        if (!confirmed) return false;
+
+        setUpdatingPayment(ep.user_id);
         const supabase = createClient();
         const { error } = await supabase
             .from('event_players')
             .update({ discount: discountValue })
-            .eq('id', ep.id);
+            .eq('id', ep.id)
+            .select('id')
+            .single();
+        setUpdatingPayment(null);
 
         if (error) {
             toast.error('บันทึกส่วนลดไม่สำเร็จ');
-            // Revert
-            setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, discount: ep.discount } : p));
+            return false;
         }
+        await logActivity({
+            category: 'payment', action: 'payment.discount_update',
+            description: `แก้ส่วนลดจาก ฿${previousValue.toLocaleString()} เป็น ฿${discountValue.toLocaleString()}`,
+            targetType: 'user', targetId: ep.user_id, eventId,
+            metadata: { previousValue, nextValue: discountValue, wasPaid: ep.payment_status === 'paid' },
+        });
+        toast.success('บันทึกส่วนลดและคำนวณยอดใหม่แล้ว');
+        await loadData(eventId);
+        return true;
     };
 
     const updateAdditionalCost = async (ep: EventPlayer, additionalCostValue: number) => {
-        setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, additional_cost: additionalCostValue } : p));
+        const previousValue = Number(ep.additional_cost || 0);
+        const confirmed = await confirmPaidBillAdjustment(ep, 'ค่าเพิ่ม', previousValue, additionalCostValue, additionalCostValue - previousValue);
+        if (!confirmed) return false;
 
+        setUpdatingPayment(ep.user_id);
         const supabase = createClient();
         const { error } = await supabase
             .from('event_players')
             .update({ additional_cost: additionalCostValue })
-            .eq('id', ep.id);
+            .eq('id', ep.id)
+            .select('id')
+            .single();
+        setUpdatingPayment(null);
 
         if (error) {
             toast.error('บันทึกค่าใช้จ่ายเพิ่มเติมไม่สำเร็จ');
-            setPlayers(prev => prev.map(p => p.id === ep.id ? { ...p, additional_cost: ep.additional_cost } : p));
+            return false;
         }
+        await logActivity({
+            category: 'payment', action: 'payment.additional_cost_update',
+            description: `แก้ค่าเพิ่มจาก ฿${previousValue.toLocaleString()} เป็น ฿${additionalCostValue.toLocaleString()}`,
+            targetType: 'user', targetId: ep.user_id, eventId,
+            metadata: { previousValue, nextValue: additionalCostValue, wasPaid: ep.payment_status === 'paid' },
+        });
+        toast.success('บันทึกค่าเพิ่มและคำนวณยอดใหม่แล้ว');
+        await loadData(eventId);
+        return true;
     };
 
     const handleAutoMatch = () => {
@@ -778,6 +842,36 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const matchesWithIndex = matches.map((m, idx) => ({ ...m, originalIndex: idx + 1 }));
     const filteredMatches = matchesWithIndex.filter(m => matchFilter === 'all' || m.status === matchFilter);
     const sortedMatches = [...filteredMatches].sort((a, b) => b.originalIndex - a.originalIndex);
+    const paidPlayerCount = players.filter(player => player.payment_status === 'paid').length;
+    const pendingPlayerCount = players.length - paidPlayerCount;
+    const totalBilled = billingRows.length > 0
+        ? billingRows.reduce((sum, row) => sum + Number(row.total_cost), 0)
+        : players.reduce((sum, player) => sum + (userBills[player.user_id] || 0), 0);
+    const totalCollected = billingRows.length > 0
+        ? billingRows.reduce((sum, row) => sum + Number(row.total_paid), 0)
+        : players.reduce((sum, player) => sum + Number(player.paid_amount || 0), 0);
+    const totalOutstanding = billingRows.length > 0
+        ? billingRows.reduce((sum, row) => sum + Number(row.pending_amount), 0)
+        : Math.max(0, totalBilled - totalCollected);
+    const normalizedPaymentQuery = paymentSearchQuery.trim().toLocaleLowerCase('th-TH');
+    const visiblePaymentPlayers = [...players]
+        .filter(player => paymentFilter === 'all' || player.payment_status === paymentFilter)
+        .filter(player => {
+            if (!normalizedPaymentQuery) return true;
+            const profile = player.profiles as unknown as Profile;
+            const searchableText = [profile?.display_name, profile?.full_name, profile?.skill_level]
+                .filter(Boolean)
+                .join(' ')
+                .toLocaleLowerCase('th-TH');
+            return searchableText.includes(normalizedPaymentQuery);
+        })
+        .sort((first, second) => {
+            if (first.payment_status !== second.payment_status) return first.payment_status === 'pending' ? -1 : 1;
+            return 0;
+        });
+    const scoreTeamPlayers = (team: 'A' | 'B') => (scoreMatch?.match_players || [])
+        .filter(player => player.team === team)
+        .map(player => player.profiles as unknown as Profile);
 
     return (
         <>
@@ -793,7 +887,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm border border-gray-100 shrink-0">
                                 <img src="/images/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
                             </div>
-                            <h1 className="text-2xl font-bold" style={{ color: 'var(--gray-900)' }}>จัดแมตช์</h1>
+                            <h1 className="text-2xl font-bold" style={{ color: 'var(--gray-900)' }}>{activeSection === 'matches' ? 'จัดแมตช์' : 'การเงินก๊วน'}</h1>
                         </div>
 
                         {/* Event Summary Box */}
@@ -850,13 +944,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             )}
                         </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={() => setShowPlayersSidebar(true)} className="btn btn-secondary">
-                            <Icon icon="solar:users-group-rounded-linear" width={18} />
-                            ผู้เล่นเช็คอิน
-                            <span className="badge badge-muted" style={{ marginLeft: '4px' }}>{players.filter(p => p.is_checked_in).length}</span>
-                        </button>
-                        {event?.status === 'open' && (
+                    {activeSection === 'matches' && (
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => setShowPlayersSidebar(true)} className="btn btn-secondary">
+                                <Icon icon="solar:users-group-rounded-linear" width={18} />
+                                ผู้เล่นเช็คอิน
+                                <span className="badge badge-muted" style={{ marginLeft: '4px' }}>{players.filter(p => p.is_checked_in).length}</span>
+                            </button>
+                            {event?.status === 'open' && (
                             <>
                                 <button onClick={handleAutoMatch} className="btn btn-secondary" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6', border: '1.5px solid rgba(59,130,246,0.3)' }}>
                                     <Icon icon="solar:magic-stick-3-linear" width={18} /> สุ่มแมตช์
@@ -865,15 +960,41 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     <Icon icon="solar:add-circle-linear" width={18} /> สร้างแมตช์ใหม่
                                 </button>
                             </>
-                        )}
-                    </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
+                <div className="card mb-6 p-1.5 flex gap-1.5" role="tablist" aria-label="เลือกส่วนจัดการก๊วน">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeSection === 'matches'}
+                        onClick={() => setActiveSection('matches')}
+                        className={`flex-1 min-h-12 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${activeSection === 'matches' ? 'bg-orange-500 text-white shadow-md' : 'text-gray-500 hover:bg-orange-50 hover:text-orange-600'}`}
+                    >
+                        <Icon icon="solar:sort-horizontal-bold-duotone" width={20} />
+                        จัดแมตช์
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeSection === 'matches' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>{matches.length}</span>
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeSection === 'finance'}
+                        onClick={() => { setActiveSection('finance'); setSidebarTeam(null); setScoreMatch(null); }}
+                        className={`flex-1 min-h-12 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${activeSection === 'finance' ? 'bg-orange-500 text-white shadow-md' : 'text-gray-500 hover:bg-orange-50 hover:text-orange-600'}`}
+                    >
+                        <Icon icon="solar:wallet-money-bold-duotone" width={20} />
+                        การเงิน
+                        {pendingPlayerCount > 0 && <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeSection === 'finance' ? 'bg-white text-orange-600' : 'bg-orange-100 text-orange-700'}`}>ค้าง {pendingPlayerCount}</span>}
+                    </button>
+                </div>
 
-                <div className={`flex gap-6 ${showPlayersSidebar ? 'flex-col lg:flex-row' : ''}`}>
+                <div className={`flex gap-6 ${activeSection === 'matches' && showPlayersSidebar ? 'flex-col lg:flex-row' : ''}`}>
                     {/* Main Content */}
-                    <div className={showPlayersSidebar ? 'flex-1 min-w-0' : 'w-full'}>
+                    <div className={activeSection === 'matches' && showPlayersSidebar ? 'flex-1 min-w-0' : 'w-full'}>
 
+                        <div className={activeSection === 'matches' ? 'block' : 'hidden'}>
                         {/* Create Form */}
                         {showForm && (
                             <div className="card mb-6 animate-in shadow-md sticky z-[40] border border-gray-200 top-[170px] lg:top-[120px] 2xl:top-[88px]" style={{ padding: '24px 32px' }}>
@@ -1604,14 +1725,34 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 })}
                             </div>
                         )}
+                        </div>
 
                         {/* Payment Status Section */}
-                        {players.length > 0 && (
-                            <div className="card shadow-sm mt-6" style={{ padding: 0, overflow: 'hidden' }}>
-                                <button
-                                    onClick={() => setShowPaymentSection(!showPaymentSection)}
-                                    className="w-full flex items-center justify-between px-5 py-4 transition-colors hover:bg-gray-50"
-                                    style={{ borderBottom: showPaymentSection ? '1px solid var(--gray-200)' : 'none' }}
+                        {activeSection === 'finance' && players.length > 0 && (
+                            <div className="space-y-4 animate-in">
+                                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                                    {[
+                                        { label: 'ยอดทั้งหมด', value: totalBilled, icon: 'solar:bill-list-bold-duotone', color: 'text-blue-600', bg: 'bg-blue-50' },
+                                        { label: 'เก็บแล้ว', value: totalCollected, icon: 'solar:wallet-money-bold-duotone', color: 'text-green-600', bg: 'bg-green-50' },
+                                        { label: 'ยอดค้าง', value: totalOutstanding, icon: 'solar:clock-circle-bold-duotone', color: 'text-orange-600', bg: 'bg-orange-50' },
+                                        { label: 'ชำระแล้ว', value: paidPlayerCount, suffix: `/${players.length} คน`, icon: 'solar:verified-check-bold-duotone', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                                    ].map(summary => (
+                                        <div key={summary.label} className="card flex items-center gap-3" style={{ padding: '16px 18px' }}>
+                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${summary.bg} ${summary.color}`}>
+                                                <Icon icon={summary.icon} width={21} />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <p className="text-[11px] font-semibold text-gray-500">{summary.label}</p>
+                                                <p className="text-lg font-black text-gray-900 truncate">{summary.suffix ? summary.value.toLocaleString() : `฿${summary.value.toLocaleString()}`} {summary.suffix && <span className="text-xs font-semibold text-gray-500">{summary.suffix}</span>}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="card shadow-sm" style={{ padding: 0, overflow: 'hidden' }}>
+                                <div
+                                    className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4"
+                                    style={{ borderBottom: '1px solid var(--gray-200)' }}
                                 >
                                     <div className="flex items-center gap-3">
                                         <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.06)' }}>
@@ -1619,17 +1760,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                         </div>
                                         <div className="text-left">
                                             <p className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>สถานะการจ่ายเงิน</p>
-                                            <div className="flex items-center gap-2 mt-0.5">
-                                                                                                <p className="text-xs" style={{ color: 'var(--gray-500)' }}>
-                                                    จ่ายแล้ว {players.filter(p => p.payment_status === 'paid').length}/{players.length} คน
-                                                </p>
-                                                <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(22,163,74,0.1)', color: 'var(--success)' }} title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
-                                                    ยอดเก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.paid_amount || 0), 0).toLocaleString()} <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} | สด ฿{cashTotal.toLocaleString()})</span>
-                                                </span>
-                                                <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6' }}>
-                                                    ยอดทั้งหมด ฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}
-                                                </span>
-                                            </div>
+                                            <p className="text-xs mt-0.5" style={{ color: 'var(--gray-500)' }}>ค้นหา แก้ยอด และรับชำระเงินของผู้เล่นแต่ละคน</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -1638,45 +1769,63 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 ค้าง {players.filter(p => p.payment_status === 'pending').length}
                                             </span>
                                         )}
-                                        <Icon icon={showPaymentSection ? 'solar:alt-arrow-up-linear' : 'solar:alt-arrow-down-linear'} width={18} style={{ color: 'var(--gray-400)' }} />
                                     </div>
-                                </button>
+                                </div>
 
-                                {showPaymentSection && (
                                     <div className="flex flex-col">
                                         {/* Payment Search Box */}
-                                        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50">
-                                            <div className="relative">
-                                                <Icon icon="solar:magnifer-linear" width={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                                                <input
-                                                    type="text"
-                                                    placeholder="ค้นหาชื่อผู้เล่นเพื่อชำระเงิน..."
-                                                    value={paymentSearchQuery}
-                                                    onChange={(e) => setPaymentSearchQuery(e.target.value)}
-                                                    className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-gray-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all"
-                                                />
-                                                {paymentSearchQuery && (
+                                        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50 flex flex-col lg:flex-row gap-3">
+                                            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-white border border-gray-200 overflow-x-auto shrink-0">
+                                                {([
+                                                    { id: 'all', label: 'ทั้งหมด', count: players.length },
+                                                    { id: 'pending', label: 'ยังไม่จ่าย', count: pendingPlayerCount },
+                                                    { id: 'paid', label: 'จ่ายแล้ว', count: paidPlayerCount },
+                                                ] as const).map(filter => (
                                                     <button
-                                                        onClick={() => setPaymentSearchQuery('')}
-                                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                                                        key={filter.id}
+                                                        type="button"
+                                                        onClick={() => setPaymentFilter(filter.id)}
+                                                        className={`min-h-9 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${paymentFilter === filter.id ? 'bg-orange-500 text-white shadow-sm' : 'text-gray-500 hover:bg-orange-50 hover:text-orange-600'}`}
                                                     >
-                                                        <Icon icon="solar:close-circle-bold" width={14} />
+                                                        {filter.label}
+                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] ${paymentFilter === filter.id ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>{filter.count}</span>
                                                     </button>
-                                                )}
+                                                ))}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between gap-3 mb-1.5">
+                                                    <label htmlFor="payment-player-search" className="text-[11px] font-bold text-gray-600">ค้นหาผู้เล่น</label>
+                                                    <span className="text-[10px] font-semibold text-gray-400">พบ {visiblePaymentPlayers.length} คน</span>
+                                                </div>
+                                                <div className="relative">
+                                                    <Icon icon="solar:magnifer-linear" width={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                                    <input
+                                                        id="payment-player-search"
+                                                        type="search"
+                                                        autoComplete="off"
+                                                        aria-label="ค้นหาผู้เล่นจากชื่อหรือระดับมือ"
+                                                        placeholder="พิมพ์ชื่อ ชื่อจริง หรือระดับมือ..."
+                                                        value={paymentSearchQuery}
+                                                        onChange={(e) => setPaymentSearchQuery(e.target.value)}
+                                                        onKeyDown={(e) => { if (e.key === 'Escape') setPaymentSearchQuery(''); }}
+                                                        className="w-full min-h-11 pl-10 pr-10 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400 transition-all"
+                                                    />
+                                                    {paymentSearchQuery && (
+                                                        <button
+                                                            type="button"
+                                                            aria-label="ล้างคำค้นหา"
+                                                            onClick={() => setPaymentSearchQuery('')}
+                                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50"
+                                                        >
+                                                            <Icon icon="solar:close-circle-bold" width={18} />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
 
                                         {/* Sort: pending first, then paid */}
-                                        {[...players]
-                                            .filter(ep => {
-                                                if (!paymentSearchQuery) return true;
-                                                const prof = ep.profiles as unknown as Profile;
-                                                return prof?.display_name?.toLowerCase().includes(paymentSearchQuery.toLowerCase());
-                                            })
-                                            .sort((a, b) => {
-                                                if (a.payment_status !== b.payment_status) return a.payment_status === 'pending' ? -1 : 1;
-                                                return 0;
-                                            })
+                                        {visiblePaymentPlayers
                                             .map((ep, index) => {
                                                 const prof = ep.profiles as unknown as Profile;
                                                 const isPaid = ep.payment_status === 'paid';
@@ -1697,9 +1846,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 return (
                                                     <div
                                                         key={ep.id}
-                                                        className="flex items-center justify-between px-5 py-3 transition-colors"
+                                                        className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-3 transition-colors"
                                                         style={{
-                                                            borderBottom: index < players.length - 1 ? '1px solid var(--gray-100)' : 'none',
+                                                            borderBottom: index < visiblePaymentPlayers.length - 1 ? '1px solid var(--gray-100)' : 'none',
                                                             background: isPaid ? 'rgba(22, 163, 74, 0.02)' : 'transparent',
                                                         }}
                                                     >
@@ -1714,47 +1863,62 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                 {truncateName(prof?.display_name, 20)}
                                                             </p>
                                                         </div>
-                                                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                                                        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:shrink-0 lg:ml-2">
                                                             {/* Additional Cost Input */}
-                                                            <div className="flex items-center gap-1">
+                                                            <label className="flex flex-col gap-1 text-[10px] font-semibold text-gray-500">
+                                                                ค่าเพิ่ม
                                                                 <input
                                                                     type="number"
                                                                     min={0}
+                                                                    step="0.01"
+                                                                    disabled={isUpdating}
                                                                     placeholder="0"
                                                                     defaultValue={ep.additional_cost || ''}
-                                                                    onBlur={(e) => {
-                                                                        const val = parseInt(e.target.value) || 0;
-                                                                        if (val !== (ep.additional_cost || 0)) updateAdditionalCost(ep, val);
+                                                                    onBlur={async (e) => {
+                                                                        const input = e.currentTarget;
+                                                                        const parsed = Number(e.target.value);
+                                                                        const val = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100) / 100) : 0;
+                                                                        if (val !== (ep.additional_cost || 0)) {
+                                                                            const saved = await updateAdditionalCost(ep, val);
+                                                                            if (!saved) input.value = ep.additional_cost ? String(ep.additional_cost) : '';
+                                                                        }
                                                                     }}
                                                                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                                                     className="w-16 text-right text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 focus:outline-none transition-all"
                                                                     style={{ background: (ep.additional_cost || 0) > 0 ? 'rgba(239,68,68,0.04)' : 'white', color: (ep.additional_cost || 0) > 0 ? '#ef4444' : 'var(--gray-600)' }}
                                                                     title="ค่าใช้จ่ายเพิ่มเติม (บาท)"
                                                                 />
-                                                                <span className="text-[10px] text-gray-400 font-medium">+เพิ่ม</span>
-                                                            </div>
+                                                            </label>
 
                                                             {/* Discount Input */}
-                                                            <div className="flex items-center gap-1">
+                                                            <label className="flex flex-col gap-1 text-[10px] font-semibold text-gray-500">
+                                                                ส่วนลด
                                                                 <input
                                                                     type="number"
                                                                     min={0}
+                                                                    step="0.01"
+                                                                    disabled={isUpdating}
                                                                     placeholder="0"
                                                                     defaultValue={ep.discount || ''}
-                                                                    onBlur={(e) => {
-                                                                        const val = parseInt(e.target.value) || 0;
-                                                                        if (val !== (ep.discount || 0)) updateDiscount(ep, val);
+                                                                    onBlur={async (e) => {
+                                                                        const input = e.currentTarget;
+                                                                        const parsed = Number(e.target.value);
+                                                                        const val = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100) / 100) : 0;
+                                                                        if (val !== (ep.discount || 0)) {
+                                                                            const saved = await updateDiscount(ep, val);
+                                                                            if (!saved) input.value = ep.discount ? String(ep.discount) : '';
+                                                                        }
                                                                     }}
                                                                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                                                     className="w-16 text-right text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 focus:outline-none transition-all"
                                                                     style={{ background: hasDiscount ? 'rgba(147,51,234,0.04)' : 'white', color: hasDiscount ? '#7c3aed' : 'var(--gray-600)' }}
                                                                     title="ส่วนลด (บาท)"
                                                                 />
-                                                                <span className="text-[10px] text-gray-400 font-medium">ลด</span>
-                                                            </div>
+                                                            </label>
 
                                                             {/* Bill Amount */}
-                                                            <div className="text-right min-w-[60px]">
+                                                            <div className="text-right min-w-[76px]">
+                                                                <p className="text-[10px] font-semibold text-gray-500 mb-1">ยอดสุทธิ</p>
                                                                 {hasDiscount && (
                                                                     <p className="text-[10px] line-through text-gray-400">฿{originalBill.toLocaleString()}</p>
                                                                 )}
@@ -1769,13 +1933,14 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             <button
                                                                 onClick={() => togglePayment(ep)}
                                                                 disabled={isUpdating}
-                                                                className={`btn btn-sm ${isPaid ? 'btn-outline' : 'btn-primary'}`}
-                                                                style={{ minWidth: '36px', padding: '6px 10px' }}
+                                                                className={`btn btn-sm whitespace-nowrap ml-auto lg:ml-0 ${isPaid ? 'btn-outline' : 'btn-primary'}`}
+                                                                style={{ minWidth: '96px', padding: '8px 12px' }}
+                                                                title={isPaid ? 'ยกเลิกรายการรับเงิน' : 'บันทึกรับชำระเงิน'}
                                                             >
                                                                 {isUpdating ? (
-                                                                    <div className="spinner" style={{ width: 14, height: 14 }} />
+                                                                    <><div className="spinner" style={{ width: 14, height: 14 }} /> บันทึก...</>
                                                                 ) : (
-                                                                    <Icon icon={isPaid ? 'solar:undo-left-linear' : 'solar:check-circle-linear'} width={16} />
+                                                                    <><Icon icon={isPaid ? 'solar:undo-left-linear' : 'solar:check-circle-linear'} width={16} /> {isPaid ? 'ยกเลิกรับเงิน' : 'รับเงิน'}</>
                                                                 )}
                                                             </button>
                                                         </div>
@@ -1783,21 +1948,34 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 );
                                             })}
 
-                                        {players.filter(ep => {
-                                            if (!paymentSearchQuery) return true;
-                                            const prof = ep.profiles as unknown as Profile;
-                                            return prof?.display_name?.toLowerCase().includes(paymentSearchQuery.toLowerCase());
-                                        }).length === 0 && (
+                                        {visiblePaymentPlayers.length === 0 && (
                                                 <div className="text-center py-10 bg-gray-50/30">
                                                     <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
                                                         <Icon icon="solar:magnifer-zoom-out-linear" width={24} className="text-gray-400" />
                                                     </div>
-                                                    <p className="text-sm font-bold text-gray-500">ไม่พบรายชื่อผู้เล่นที่ค้นหา</p>
-                                                    <p className="text-[10px] text-gray-400 mt-1">ลองเปลี่ยนคำค้นหาใหม่อีกครั้ง</p>
+                                                    <p className="text-sm font-bold text-gray-500">ไม่พบผู้เล่นในตัวกรองนี้</p>
+                                                    <p className="text-[10px] text-gray-400 mt-1">ลองเปลี่ยนสถานะหรือคำค้นหา</p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setPaymentFilter('all'); setPaymentSearchQuery(''); }}
+                                                        className="btn btn-sm btn-secondary mt-4"
+                                                    >
+                                                        ล้างตัวกรอง
+                                                    </button>
                                                 </div>
                                             )}
                                     </div>
-                                )}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeSection === 'finance' && players.length === 0 && (
+                            <div className="card text-center shadow-sm" style={{ padding: '56px 28px' }}>
+                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 bg-green-50 text-green-600">
+                                    <Icon icon="solar:wallet-money-linear" width={28} />
+                                </div>
+                                <h2 className="text-lg font-bold text-gray-900">ยังไม่มีรายการการเงิน</h2>
+                                <p className="text-sm text-gray-500 mt-1">เพิ่มผู้เล่นเข้าก๊วนก่อนเริ่มบันทึกการชำระเงิน</p>
                             </div>
                         )}
 
@@ -1805,20 +1983,36 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         {scoreMatch && typeof document !== 'undefined' && createPortal(
                             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={() => setScoreMatch(null)}>
                                 <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" />
-                                <div className="card w-full max-w-md animate-in shadow-xl relative z-10" style={{ padding: '28px 32px' }} onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex items-center justify-between mb-5">
-                                        <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>บันทึกคะแนน</h3>
-                                        <button onClick={() => setScoreMatch(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
+                                <div className="card w-full max-w-xl max-h-[92vh] overflow-y-auto animate-in shadow-2xl relative z-10" style={{ padding: '32px 36px' }} onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex items-start justify-between gap-4 mb-7 p-4 rounded-2xl bg-orange-50 border border-orange-100">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-12 h-12 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-sm shrink-0">
+                                                <Icon icon="solar:cup-star-bold-duotone" width={27} />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-black text-xl text-gray-950">บันทึกผลการแข่งขัน</h3>
+                                                <p className="text-xs font-semibold text-orange-700 mt-1">แมตช์ #{scoreMatch.match_number || '-'} · คอร์ท {scoreMatch.court_number || '-'}</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => setScoreMatch(null)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-white text-gray-500 hover:text-orange-600 hover:bg-orange-100 transition-colors shadow-sm shrink-0" aria-label="ปิดหน้าต่างบันทึกผล">
                                             <Icon icon="solar:close-circle-linear" width={20} />
                                         </button>
                                     </div>
 
                                     {/* Result Selector */}
                                     <div className="flex flex-col gap-4 mb-8">
-                                        <div className="flex gap-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="text-sm font-black text-gray-900">เลือกผลการแข่งขัน</p>
+                                                <p className="text-xs text-gray-500 mt-0.5">ตรวจสอบรายชื่อให้ถูกต้องก่อนเลือกทีมชนะ</p>
+                                            </div>
+                                            {winner && <span className="badge badge-warning">เลือกแล้ว</span>}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
                                             <button
                                                 onClick={() => setWinner(winner === 'A' ? null : 'A')}
-                                                className="flex-1 p-5 rounded-2xl flex flex-col items-center gap-2 transition-all duration-200 border-2 shadow-sm hover:shadow-md group"
+                                                aria-pressed={winner === 'A'}
+                                                className="p-5 sm:p-6 rounded-2xl flex flex-col items-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:ring-4 hover:ring-orange-100 active:translate-y-0 active:scale-[0.99] cursor-pointer group min-w-0"
                                                 style={{
                                                     background: winner === 'A' ? 'var(--orange-500)' : 'white',
                                                     color: winner === 'A' ? 'white' : 'var(--orange-500)',
@@ -1826,15 +2020,30 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     transform: winner === 'A' ? 'scale(1.02)' : 'none',
                                                 }}
                                             >
-                                                <div className={`p-3 rounded-full transition-colors ${winner === 'A' ? 'bg-white/20' : 'bg-orange-50'}`}>
-                                                    <Icon icon={winner === 'A' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={32} />
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`p-2 rounded-full transition-colors ${winner === 'A' ? 'bg-white/20' : 'bg-orange-50'}`}>
+                                                        <Icon icon={winner === 'A' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={24} />
+                                                    </div>
+                                                    <span className="font-extrabold text-sm uppercase tracking-tight">ทีม A</span>
                                                 </div>
-                                                <span className="font-extrabold text-sm uppercase tracking-tight">ทีม A ชนะ</span>
+                                                <div className="w-full space-y-2">
+                                                    {scoreTeamPlayers('A').map(player => (
+                                                        <div key={player.id} className={`w-full p-2.5 rounded-xl flex items-center gap-2 text-left ${winner === 'A' ? 'bg-white/15 text-white' : 'bg-orange-50 text-gray-800'}`}>
+                                                            <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${winner === 'A' ? 'bg-white/20' : 'bg-white text-orange-600 shadow-sm'}`}>{player.display_name?.charAt(0)?.toUpperCase()}</span>
+                                                            <span className="min-w-0 flex-1">
+                                                                <strong className="block text-xs font-black truncate">{player.display_name}</strong>
+                                                                <small className={`block text-[10px] mt-0.5 ${winner === 'A' ? 'text-white/80' : 'text-gray-500'}`}>มือ {player.skill_level || 'ไม่ระบุ'}</small>
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <span className={`text-[11px] font-bold ${winner === 'A' ? 'text-white' : 'text-orange-600'}`}>เลือกทีม A ชนะ</span>
                                             </button>
 
                                             <button
                                                 onClick={() => setWinner(winner === 'B' ? null : 'B')}
-                                                className="flex-1 p-5 rounded-2xl flex flex-col items-center gap-2 transition-all duration-200 border-2 shadow-sm hover:shadow-md group"
+                                                aria-pressed={winner === 'B'}
+                                                className="p-5 sm:p-6 rounded-2xl flex flex-col items-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:ring-4 hover:ring-blue-100 active:translate-y-0 active:scale-[0.99] cursor-pointer group min-w-0"
                                                 style={{
                                                     background: winner === 'B' ? '#3b82f6' : 'white',
                                                     color: winner === 'B' ? 'white' : '#3b82f6',
@@ -1842,17 +2051,32 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     transform: winner === 'B' ? 'scale(1.02)' : 'none',
                                                 }}
                                             >
-                                                <div className={`p-3 rounded-full transition-colors ${winner === 'B' ? 'bg-white/20' : 'bg-blue-50'}`}>
-                                                    <Icon icon={winner === 'B' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={32} />
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`p-2 rounded-full transition-colors ${winner === 'B' ? 'bg-white/20' : 'bg-blue-50'}`}>
+                                                        <Icon icon={winner === 'B' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={24} />
+                                                    </div>
+                                                    <span className="font-extrabold text-sm uppercase tracking-tight">ทีม B</span>
                                                 </div>
-                                                <span className="font-extrabold text-sm uppercase tracking-tight">ทีม B ชนะ</span>
+                                                <div className="w-full space-y-2">
+                                                    {scoreTeamPlayers('B').map(player => (
+                                                        <div key={player.id} className={`w-full p-2.5 rounded-xl flex items-center gap-2 text-left ${winner === 'B' ? 'bg-white/15 text-white' : 'bg-blue-50 text-gray-800'}`}>
+                                                            <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${winner === 'B' ? 'bg-white/20' : 'bg-white text-blue-600 shadow-sm'}`}>{player.display_name?.charAt(0)?.toUpperCase()}</span>
+                                                            <span className="min-w-0 flex-1">
+                                                                <strong className="block text-xs font-black truncate">{player.display_name}</strong>
+                                                                <small className={`block text-[10px] mt-0.5 ${winner === 'B' ? 'text-white/80' : 'text-gray-500'}`}>มือ {player.skill_level || 'ไม่ระบุ'}</small>
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <span className={`text-[11px] font-bold ${winner === 'B' ? 'text-white' : 'text-blue-600'}`}>เลือกทีม B ชนะ</span>
                                             </button>
                                         </div>
 
-                                        <div className="flex gap-3">
+                                        <div className="grid grid-cols-2 gap-4">
                                             <button
                                                 onClick={() => setWinner(winner === 'Draw' ? null : 'Draw')}
-                                                className="flex-1 p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-md"
+                                                aria-pressed={winner === 'Draw'}
+                                                className="p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:ring-4 hover:ring-purple-100 active:translate-y-0 active:scale-[0.99] cursor-pointer"
                                                 style={{
                                                     background: winner === 'Draw' ? '#9333ea' : 'white',
                                                     color: winner === 'Draw' ? 'white' : '#9333ea',
@@ -1868,7 +2092,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
 
                                             <button
                                                 onClick={() => setWinner(winner === 'None' ? null : 'None')}
-                                                className="flex-1 p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-md"
+                                                aria-pressed={winner === 'None'}
+                                                className="p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:ring-4 hover:ring-gray-200 active:translate-y-0 active:scale-[0.99] cursor-pointer"
                                                 style={{
                                                     background: winner === 'None' ? 'var(--gray-600)' : 'white',
                                                     color: winner === 'None' ? 'white' : 'var(--gray-600)',
@@ -1887,7 +2112,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                     <button
                                         onClick={submitScore}
                                         disabled={!winner}
-                                        className={`btn w-full py-4 rounded-xl text-lg font-bold shadow-lg transition-all ${winner
+                                        className={`btn w-full min-h-14 rounded-xl text-base sm:text-lg font-black shadow-lg transition-all ${winner
                                             ? 'btn-primary shadow-orange-200 active:scale-95'
                                             : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                             }`}
@@ -2065,7 +2290,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                     </div > {/* end main content */}
 
                     {/* Check-in Side Panel (inline) Add back the inactive sections as requested */}
-                    {showPlayersSidebar && (
+                    {activeSection === 'matches' && showPlayersSidebar && (
                         <div className="w-full lg:w-80 xl:w-96 shrink-0">
                             <div className="card shadow-sm sticky top-4 overflow-hidden" style={{ maxHeight: 'calc(100vh - 100px)' }}>
                                 {/* Header */}

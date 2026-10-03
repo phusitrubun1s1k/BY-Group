@@ -12,6 +12,7 @@ import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import RankBadge from '@/src/components/RankBadge';
 import { getNextRank, getRankFromMMR } from '@/src/lib/rank-utils';
 import { fetchPlayerStats, calculateAchievementProgress, AchievementProgress } from '@/src/lib/utils/achievement-utils';
+import { getHistoryMatchResult, getPlayerMatchResult, MATCH_RESULT_LABELS, type MatchResult } from '@/src/lib/utils/match-result';
 
 const SKILL_OPTIONS: SelectOption[] = [
     { value: null as any, label: 'ไม่ระบุ', icon: 'solar:question-circle-linear' },
@@ -50,11 +51,11 @@ interface MMRHistory {
     change: number;
     reason: string;
     change_date: string;
-    team_a_score: number;
-    team_b_score: number;
+    team_a_score: number | null;
+    team_b_score: number | null;
     event_name: string;
     event_date: string;
-    result: 'Win' | 'Loss' | 'Draw';
+    result: MatchResult | 'Adjustment';
 }
 
 const generatePayload = (id: string, amount: number) => {
@@ -130,7 +131,7 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
         birth_date: string;
     }>({ display_name: '', full_name: '', skill_level: undefined, birth_date: '' });
     const [saving, setSaving] = useState(false);
-    const [stats, setStats] = useState({ totalGames: 0, wins: 0, losses: 0, totalPoints: 0 });
+    const [stats, setStats] = useState({ totalGames: 0, wins: 0, losses: 0, draws: 0, unrated: 0, totalPoints: 0 });
     const [todayBill, setTodayBill] = useState<{
         amount: number;
         paid: boolean;
@@ -175,13 +176,18 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
         const { data: matches } = await supabase.from('match_players').select('*, matches(*)').eq('user_id', targetUserId);
         if (matches) {
             const finished = matches.filter((mp: any) => mp.matches?.status === 'finished');
-            const wins = finished.filter((mp: any) =>
-                mp.team === 'A' ? mp.matches.team_a_score > mp.matches.team_b_score : mp.matches.team_b_score > mp.matches.team_a_score
-            );
+            const results = finished.map((mp: any) => getPlayerMatchResult(mp.team, mp.matches.team_a_score, mp.matches.team_b_score));
             const totalPoints = finished.reduce((sum: number, mp: any) =>
                 sum + (mp.team === 'A' ? mp.matches.team_a_score : mp.matches.team_b_score), 0
             );
-            setStats({ totalGames: finished.length, wins: wins.length, losses: finished.length - wins.length, totalPoints });
+            setStats({
+                totalGames: finished.length,
+                wins: results.filter(result => result === 'Win').length,
+                losses: results.filter(result => result === 'Loss').length,
+                draws: results.filter(result => result === 'Draw').length,
+                unrated: results.filter(result => result === 'Unrated').length,
+                totalPoints
+            });
         }
 
         // Fetch achievements
@@ -292,7 +298,22 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
         return Object.values(groups).sort((a, b) => new Date(b.items[0].event_date).getTime() - new Date(a.items[0].event_date).getTime());
     }, [billingHistory]);
 
-    const winRate = useMemo(() => stats.totalGames === 0 ? 0 : Math.round((stats.wins / stats.totalGames) * 100), [stats]);
+    const winRate = useMemo(() => {
+        const ratedGames = stats.wins + stats.losses + stats.draws;
+        return ratedGames === 0 ? 0 : Math.round((stats.wins / ratedGames) * 100);
+    }, [stats]);
+    const displayedHistoryResult = (history: MMRHistory) => history.reason === 'match_result'
+        ? getHistoryMatchResult(history.team_a_score, history.team_b_score, history.result)
+        : 'Adjustment';
+    const historyBadgeClass = (history: MMRHistory) => {
+        if (history.reason?.startsWith('absence_penalty:')) return 'bg-rose-600 text-white';
+        const result = displayedHistoryResult(history);
+        if (result === 'Draw') return 'bg-indigo-500 text-white';
+        if (result === 'Unrated') return 'bg-slate-500 text-white';
+        if (result === 'Win') return 'bg-emerald-500 text-white';
+        if (result === 'Loss') return 'bg-rose-500 text-white';
+        return 'bg-gray-500 text-white';
+    };
     const mmrPoints = useMemo(() => mmrHistory.length === 0 ? [] : [...mmrHistory].slice(0, 15).reverse().map(h => h.new_mmr), [mmrHistory]);
 
     if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
@@ -403,12 +424,13 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                 </div>
 
                 <div className="p-4 sm:p-6 bg-white">
-                    <div className="grid grid-cols-4 gap-2 sm:gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4">
                         {[
                             { label: 'เกม', value: stats.totalGames, icon: 'solar:gamepad-bold-duotone', color: 'text-blue-500', bg: 'bg-blue-50' },
                             { label: 'ชนะ', value: stats.wins, icon: 'solar:cup-star-bold-duotone', color: 'text-emerald-500', bg: 'bg-emerald-50' },
+                            { label: 'เสมอ', value: stats.draws, icon: 'solar:hand-shake-bold-duotone', color: 'text-indigo-500', bg: 'bg-indigo-50' },
+                            { label: 'แพ้', value: stats.losses, icon: 'solar:flag-2-bold-duotone', color: 'text-rose-500', bg: 'bg-rose-50' },
                             { label: 'Win Rate', value: `${winRate}%`, icon: 'solar:graph-up-bold-duotone', color: 'text-purple-500', bg: 'bg-purple-50' },
-                            { label: 'แต้ม', value: stats.totalPoints, icon: 'solar:star-bold-duotone', color: 'text-amber-500', bg: 'bg-amber-50' },
                         ].map((stat, i) => (
                             <div key={i} className="flex flex-col items-center justify-center p-3 sm:p-4 rounded-2xl border border-gray-100 bg-gray-50/50">
                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${stat.bg} ${stat.color}`}><Icon icon={stat.icon} width={18} /></div>
@@ -460,12 +482,8 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
                                     <div>
                                         <div className="flex items-center gap-2">
                                             <p className="text-xs font-black text-gray-900">{h.change > 0 ? '+' : ''}{h.change} แต้ม</p>
-                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
-                                                h.reason?.startsWith('absence_penalty:') 
-                                                    ? 'bg-rose-600 text-white' 
-                                                    : h.change > 0 ? 'bg-emerald-500 text-white' : h.change < 0 ? 'bg-rose-500 text-white' : 'bg-gray-400 text-white'
-                                            }`}>
-                                                {h.reason?.startsWith('absence_penalty:') ? 'ขาดก๊วน' : h.result}
+                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${historyBadgeClass(h)}`}>
+                                                {h.reason?.startsWith('absence_penalty:') ? 'ขาดก๊วน' : MATCH_RESULT_LABELS[displayedHistoryResult(h)]}
                                             </span>
                                         </div>
                                         <p className="text-[10px] font-medium text-gray-400">
