@@ -872,6 +872,9 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const scoreTeamPlayers = (team: 'A' | 'B') => (scoreMatch?.match_players || [])
         .filter(player => player.team === team)
         .map(player => player.profiles as unknown as Profile);
+    const paymentModalAmount = paymentModalPlayer
+        ? Number(billingRows.find(row => row.event_player_id === paymentModalPlayer.id)?.pending_amount || 0)
+        : 0;
 
     return (
         <>
@@ -2635,48 +2638,53 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             {/* Payment Method Selector Modal */}
             {paymentModalPlayer && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in fade-in" style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }} onClick={() => setPaymentModalPlayer(null)}>
-                    <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 overflow-hidden p-6 animate-in slide-in-from-bottom-4" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center text-green-600 shrink-0">
-                                <Icon icon="solar:wallet-money-bold" width={22} />
+                    <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-gray-100 overflow-hidden p-6 sm:p-8 animate-in slide-in-from-bottom-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-start justify-between gap-4 mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center text-green-600 shrink-0">
+                                    <Icon icon="solar:wallet-money-bold" width={26} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-gray-950">ยืนยันการรับชำระเงิน</h3>
+                                    <p className="text-sm text-gray-500 font-medium mt-0.5">
+                                        {(paymentModalPlayer.profiles as unknown as Profile)?.display_name}
+                                    </p>
+                                </div>
                             </div>
-                            <div>
-                                <h3 className="text-base font-bold text-gray-950">เลือกวิธีการชำระเงิน</h3>
-                                <p className="text-xs text-gray-500 font-medium">
-                                    {(paymentModalPlayer.profiles as unknown as Profile)?.display_name} • ยอดชำระ ฿{Number(billingRows.find(row => row.event_player_id === paymentModalPlayer.id)?.pending_amount || 0).toLocaleString()}
-                                </p>
-                            </div>
+                            <button type="button" onClick={() => setPaymentModalPlayer(null)} className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors" aria-label="ปิดหน้าต่าง">
+                                <Icon icon="solar:close-circle-linear" width={22} />
+                            </button>
                         </div>
 
-                        <p className="text-sm font-medium text-gray-600 mb-6 leading-relaxed">
-                            กรุณาระบุช่องทางการชำระเงินสำหรับยอดคิวของวันนี้ เพื่อนำไปจัดเก็บสถิติและแสดงผลข้อมูลทางการเงินของก๊วน
-                        </p>
+                        <div className="rounded-2xl border-2 border-orange-200 bg-orange-50 px-5 py-6 text-center mb-6">
+                            <p className="text-xs font-bold uppercase tracking-wide text-orange-700">ยอดที่ต้องรับ</p>
+                            <p className="text-4xl sm:text-5xl font-black text-orange-600 mt-2 tabular-nums leading-none">
+                                ฿{paymentModalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </p>
+                            <p className="text-xs font-medium text-orange-700/70 mt-3">ตรวจสอบยอดก่อนเลือกช่องทางการชำระเงิน</p>
+                        </div>
 
-                        <div className="grid grid-cols-2 gap-3 mb-4">
+                        <p className="text-sm font-bold text-gray-800 mb-3">เลือกช่องทางที่รับเงินจริง</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
                             <button
                                 onClick={() => handleConfirmPayment(paymentModalPlayer, 'transfer')}
-                                className="flex flex-col items-center justify-center p-4 rounded-xl border border-blue-200 bg-blue-50/20 text-blue-600 hover:bg-blue-50/50 transition-all font-bold gap-2 text-sm shadow-sm"
+                                className="min-h-32 flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-blue-200 bg-blue-50/40 text-blue-700 hover:bg-blue-600 hover:text-white hover:border-blue-600 hover:shadow-xl hover:-translate-y-1 active:translate-y-0 active:scale-[0.99] transition-all duration-200 font-black gap-3 text-base shadow-sm cursor-pointer"
                             >
-                                <Icon icon="solar:smartphone-line-duotone" width={32} />
-                                โอนเงิน (Transfer)
+                                <Icon icon="solar:smartphone-line-duotone" width={38} />
+                                <span>ยืนยันรับเงินโอน</span>
+                                <span className="text-xs font-semibold opacity-75">฿{paymentModalAmount.toLocaleString()}</span>
                             </button>
                             <button
                                 onClick={() => handleConfirmPayment(paymentModalPlayer, 'cash')}
-                                className="flex flex-col items-center justify-center p-4 rounded-xl border border-emerald-200 bg-emerald-50/20 text-emerald-600 hover:bg-emerald-50/50 transition-all font-bold gap-2 text-sm shadow-sm"
+                                className="min-h-32 flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 text-emerald-700 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 hover:shadow-xl hover:-translate-y-1 active:translate-y-0 active:scale-[0.99] transition-all duration-200 font-black gap-3 text-base shadow-sm cursor-pointer"
                             >
-                                <Icon icon="solar:notes-line-duotone" width={32} />
-                                เงินสด (Cash)
+                                <Icon icon="solar:notes-line-duotone" width={38} />
+                                <span>ยืนยันรับเงินสด</span>
+                                <span className="text-xs font-semibold opacity-75">฿{paymentModalAmount.toLocaleString()}</span>
                             </button>
                         </div>
 
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setPaymentModalPlayer(null)}
-                                className="btn btn-secondary w-full btn-sm"
-                            >
-                                ยกเลิก
-                            </button>
-                        </div>
+                        <button onClick={() => setPaymentModalPlayer(null)} className="btn btn-secondary w-full min-h-11">ยกเลิก</button>
                     </div>
                 </div>
             )}
