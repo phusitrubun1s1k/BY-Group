@@ -141,6 +141,56 @@ export default function LeaderboardPage() {
                 .eq('season_label', selectedSeason)
                 .order('final_mmr', { ascending: false });
 
+            // ดึงช่วงเวลารีเซ็ตทั้งหมดเพื่อคำนวณวันเริ่มต้น-สิ้นสุดของซีซันนี้
+            const { data: executedResets } = await supabase
+                .from('rank_reset_schedule')
+                .select('id, reset_at, executed_at, season_label')
+                .eq('status', 'executed')
+                .order('reset_at', { ascending: true });
+
+            let startCutoff: string | null = null;
+            let endCutoff: string | null = null;
+
+            if (executedResets) {
+                const targetIdx = executedResets.findIndex(r => r.season_label === selectedSeason);
+                if (targetIdx !== -1) {
+                    const target = executedResets[targetIdx];
+                    endCutoff = target.executed_at || target.reset_at;
+                    if (targetIdx > 0) {
+                        const prev = executedResets[targetIdx - 1];
+                        startCutoff = prev.executed_at || prev.reset_at;
+                    }
+                }
+            }
+
+            // คำนวณยอดเงินที่จ่ายจริงของแต่ละคนในซีซันนี้ (ยอดสายเปย์)
+            const spendingMap: Record<string, number> = {};
+            if (endCutoff) {
+                let eventQuery = supabase
+                    .from('events')
+                    .select('id')
+                    .lte('created_at', endCutoff);
+                if (startCutoff) {
+                    eventQuery = eventQuery.gt('created_at', startCutoff);
+                }
+                const { data: seasonEvents } = await eventQuery;
+                const eventIds = seasonEvents?.map(e => e.id) || [];
+
+                if (eventIds.length > 0) {
+                    const { data: playerPayments } = await supabase
+                        .from('event_players')
+                        .select('user_id, paid_amount, payment_status')
+                        .in('event_id', eventIds)
+                        .limit(5000);
+
+                    playerPayments?.forEach(p => {
+                        if (p.payment_status === 'paid' || (Number(p.paid_amount) > 0)) {
+                            spendingMap[p.user_id] = (spendingMap[p.user_id] || 0) + Number(p.paid_amount || 0);
+                        }
+                    });
+                }
+            }
+
             const seasonRowsTyped = (seasonRows || []) as unknown as SeasonHistoryRow[];
             const mapped: LeaderboardEntry[] = seasonRowsTyped.filter(r => !r.profiles?.is_guest).map(r => ({
                 user_id: r.user_id,
@@ -151,7 +201,7 @@ export default function LeaderboardPage() {
                 total_wins: r.total_wins || 0,
                 total_losses: r.total_losses || 0,
                 total_points: 0,
-                total_spent: 0
+                total_spent: spendingMap[r.user_id] || 0
             }));
 
             setData(mapped);

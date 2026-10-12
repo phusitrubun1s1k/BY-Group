@@ -90,6 +90,17 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [guestName, setGuestName] = useState('');
     const [guestSkill, setGuestSkill] = useState<string | null>(null);
 
+    // Court Management State
+    const [showAddCourtModal, setShowAddCourtModal] = useState(false);
+    const [newCourtInput, setNewCourtInput] = useState('');
+    const [savingCourt, setSavingCourt] = useState(false);
+
+    // Unfinished Matches Alert State
+    const [unfinishedMatchesPlayer, setUnfinishedMatchesPlayer] = useState<{
+        player: EventPlayer;
+        matches: Match[];
+    } | null>(null);
+
     const confirm = useConfirm();
 
     // Player stats for match making
@@ -238,6 +249,95 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         } finally {
             setCreating(false);
         }
+    };
+
+    const handleAddCourt = async (courtToAdd?: string) => {
+        const val = (courtToAdd || newCourtInput).trim();
+        if (!val) {
+            toast.error('กรุณาระบุหมายเลขคอร์ท');
+            return;
+        }
+        const currentCourts = event?.courts || [];
+        if (currentCourts.includes(val)) {
+            toast.error(`คอร์ท ${val} มีอยู่ในรายการแล้ว`);
+            return;
+        }
+
+        const nextCourts = [...currentCourts, val].sort((a, b) => {
+            const numA = Number(a);
+            const numB = Number(b);
+            if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+            return a.localeCompare(b);
+        });
+
+        setSavingCourt(true);
+        const supabase = createClient();
+        const { error } = await supabase
+            .from('events')
+            .update({ courts: nextCourts })
+            .eq('id', eventId);
+        setSavingCourt(false);
+
+        if (error) {
+            toast.error('เพิ่มคอร์ทไม่สำเร็จ: ' + error.message);
+            return;
+        }
+
+        setEvent(prev => prev ? { ...prev, courts: nextCourts } : prev);
+        setNewCourtInput('');
+        toast.success(`เพิ่มคอร์ท ${val} เรียบร้อยแล้ว`);
+        await logActivity({
+            category: 'match',
+            action: 'event.court_add',
+            description: `เพิ่มคอร์ท ${val} ในก๊วน`,
+            targetType: 'event',
+            targetId: eventId,
+            eventId,
+            metadata: { addedCourt: val, courts: nextCourts },
+        });
+    };
+
+    const handleRemoveCourt = async (courtToRemove: string) => {
+        if (activeCourtsSet.has(courtToRemove)) {
+            toast.error(`ไม่สามารถลบคอร์ท ${courtToRemove} ได้เนื่องจากมีแมตช์กำลังใช้งานอยู่`);
+            return;
+        }
+
+        const ok = await confirm({
+            title: 'ลบคอร์ท?',
+            message: `ต้องการลบคอร์ท ${courtToRemove} ออกจากก๊วนนี้ใช่หรือไม่?`,
+            type: 'warning',
+            confirmText: 'ลบคอร์ท'
+        });
+        if (!ok) return;
+
+        const currentCourts = event?.courts || [];
+        const nextCourts = currentCourts.filter(c => c !== courtToRemove);
+
+        setSavingCourt(true);
+        const supabase = createClient();
+        const { error } = await supabase
+            .from('events')
+            .update({ courts: nextCourts })
+            .eq('id', eventId);
+        setSavingCourt(false);
+
+        if (error) {
+            toast.error('ลบคอร์ทไม่สำเร็จ: ' + error.message);
+            return;
+        }
+
+        setEvent(prev => prev ? { ...prev, courts: nextCourts } : prev);
+        toast.success(`ลบคอร์ท ${courtToRemove} เรียบร้อยแล้ว`);
+        await logActivity({
+            category: 'match',
+            action: 'event.court_remove',
+            description: `ลบคอร์ท ${courtToRemove} ออกจากก๊วน`,
+            targetType: 'event',
+            targetId: eventId,
+            eventId,
+            metadata: { removedCourt: courtToRemove, courts: nextCourts },
+        });
     };
 
     useEffect(() => {
@@ -638,7 +738,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (ep.payment_status === 'paid') {
             const ok = await confirm({
                 title: 'ยกเลิกการชำระเงิน?',
-                message: `ยกเลิกรายการรับเงินทั้งหมด ฿${Number(ep.paid_amount || 0).toFixed(2)} ของ ${prof?.display_name}? การทำรายการนี้ไม่ได้คืนเงินจริง`,
+                message: `ยกเลิกรายการรับเงินทั้งหมด ฿${Number(userBills[ep.user_id] ?? ep.paid_amount ?? 0).toFixed(2)} ของ ${prof?.display_name}? การทำรายการนี้ไม่ได้คืนเงินจริง`,
                 type: 'warning',
                 confirmText: 'ยืนยันยกเลิก'
             });
@@ -658,16 +758,48 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             toast.success('เปลี่ยนสถานะเป็นยังไม่จ่าย');
             loadData(eventId);
         } else {
+            // ตรวจสอบว่าผู้เล่นยังมีแมตช์ที่ยังไม่กดจบหรือไม่ (playing หรือ waiting)
+            const unfinished = matches.filter(m =>
+                (m.status === 'playing' || m.status === 'waiting') &&
+                m.match_players?.some(mp => mp.user_id === ep.user_id)
+            );
+
+            if (unfinished.length > 0) {
+                setUnfinishedMatchesPlayer({
+                    player: ep,
+                    matches: unfinished
+                });
+                return;
+            }
+
             setPaymentModalPlayer(ep);
         }
     };
 
     const handleConfirmPayment = async (ep: EventPlayer, method: 'cash' | 'transfer') => {
+        // ตรวจสอบความปลอดภัยซ้ำก่อนบันทึก
+        const unfinished = matches.filter(m =>
+            (m.status === 'playing' || m.status === 'waiting') &&
+            m.match_players?.some(mp => mp.user_id === ep.user_id)
+        );
+        if (unfinished.length > 0) {
+            setPaymentModalPlayer(null);
+            setUnfinishedMatchesPlayer({
+                player: ep,
+                matches: unfinished
+            });
+            return;
+        }
+
         setPaymentModalPlayer(null);
         setUpdatingPayment(ep.user_id);
         const supabase = createClient();
         const row = billingRows.find(item => item.event_player_id === ep.id);
-        const { error } = await savePayment(supabase, ep.id, method, Number(row?.pending_amount || 0));
+        const expectedDue = Number(
+            row?.pending_amount ??
+            Math.max(0, (userBills[ep.user_id] || 0) - Number(ep.paid_amount || 0))
+        );
+        const { error } = await savePayment(supabase, ep.id, method, expectedDue);
         setUpdatingPayment(null);
 
         if (error) {
@@ -834,25 +966,96 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         finished: { label: 'จบแล้ว', badge: 'badge-muted' },
     };
 
-        if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
+    // คำนวณยอดเงินจริงแบบเรียลไทม์ รวมค่าเพิ่มและหักส่วนลดของผู้เล่นทุกคน
+    const {
+        transferTotal,
+        cashTotal,
+        transferPlayerCount,
+        cashPlayerCount,
+        totalDiscount,
+        totalAdditionalCost,
+        discountedPlayerCount,
+        additionalCostPlayerCount,
+        totalBilled,
+        totalCollected,
+        totalOutstanding,
+        paidPlayerCount,
+        pendingPlayerCount,
+    } = useMemo(() => {
+        let transferSum = 0;
+        let cashSum = 0;
+        let transferCount = 0;
+        let cashCount = 0;
+        let discountSum = 0;
+        let additionalCostSum = 0;
+        let discountCount = 0;
+        let additionalCostCount = 0;
+        let billedSum = 0;
+        let paidCount = 0;
 
-    const transferTotal = billingRows.reduce((sum, row) => sum + Number(row.transfer_paid), 0);
-    const cashTotal = billingRows.reduce((sum, row) => sum + Number(row.cash_paid), 0);
+        players.forEach(p => {
+            const bill = userBills[p.user_id] ?? 0;
+            billedSum += bill;
+
+            const disc = Number(p.discount || 0);
+            const addCost = Number(p.additional_cost || 0);
+
+            if (disc > 0) {
+                discountSum += disc;
+                discountCount += 1;
+            }
+            if (addCost > 0) {
+                additionalCostSum += addCost;
+                additionalCostCount += 1;
+            }
+
+            const isPaid = p.payment_status === 'paid';
+            if (isPaid) {
+                paidCount += 1;
+                const row = billingRows.find(r => r.event_player_id === p.id);
+                // ระบุช่องทางการชำระ (อิงจากข้อมูลล่าสุดใน event_player หรือจากประวัติรับเงิน)
+                const method = p.payment_method || row?.payment_method || (row?.cash_paid && row.cash_paid > 0 ? 'cash' : 'transfer');
+
+                if (method === 'cash') {
+                    cashSum += bill;
+                    cashCount += 1;
+                } else {
+                    transferSum += bill;
+                    transferCount += 1;
+                }
+            } else {
+                // หากยังไม่จ่าย แต่มีบันทึกการชำระบางส่วนไว้ในประวัติ
+                const row = billingRows.find(r => r.event_player_id === p.id);
+                const rowTransfer = Number(row?.transfer_paid || 0);
+                const rowCash = Number(row?.cash_paid || 0);
+                if (rowTransfer > 0) transferSum += rowTransfer;
+                if (rowCash > 0) cashSum += rowCash;
+            }
+        });
+
+        const collectedSum = transferSum + cashSum;
+        const outstandingSum = Math.max(0, billedSum - collectedSum);
+
+        return {
+            transferTotal: transferSum,
+            cashTotal: cashSum,
+            transferPlayerCount: transferCount,
+            cashPlayerCount: cashCount,
+            totalDiscount: discountSum,
+            totalAdditionalCost: additionalCostSum,
+            discountedPlayerCount: discountCount,
+            additionalCostPlayerCount: additionalCostCount,
+            totalBilled: billedSum,
+            totalCollected: collectedSum,
+            totalOutstanding: outstandingSum,
+            paidPlayerCount: paidCount,
+            pendingPlayerCount: players.length - paidCount,
+        };
+    }, [players, userBills, billingRows]);
 
     const matchesWithIndex = matches.map((m, idx) => ({ ...m, originalIndex: idx + 1 }));
     const filteredMatches = matchesWithIndex.filter(m => matchFilter === 'all' || m.status === matchFilter);
     const sortedMatches = [...filteredMatches].sort((a, b) => b.originalIndex - a.originalIndex);
-    const paidPlayerCount = players.filter(player => player.payment_status === 'paid').length;
-    const pendingPlayerCount = players.length - paidPlayerCount;
-    const totalBilled = billingRows.length > 0
-        ? billingRows.reduce((sum, row) => sum + Number(row.total_cost), 0)
-        : players.reduce((sum, player) => sum + (userBills[player.user_id] || 0), 0);
-    const totalCollected = billingRows.length > 0
-        ? billingRows.reduce((sum, row) => sum + Number(row.total_paid), 0)
-        : players.reduce((sum, player) => sum + Number(player.paid_amount || 0), 0);
-    const totalOutstanding = billingRows.length > 0
-        ? billingRows.reduce((sum, row) => sum + Number(row.pending_amount), 0)
-        : Math.max(0, totalBilled - totalCollected);
     const normalizedPaymentQuery = paymentSearchQuery.trim().toLocaleLowerCase('th-TH');
     const visiblePaymentPlayers = [...players]
         .filter(player => paymentFilter === 'all' || player.payment_status === paymentFilter)
@@ -873,8 +1076,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         .filter(player => player.team === team)
         .map(player => player.profiles as unknown as Profile);
     const paymentModalAmount = paymentModalPlayer
-        ? Number(billingRows.find(row => row.event_player_id === paymentModalPlayer.id)?.pending_amount || 0)
+        ? Number(
+            billingRows.find(row => row.event_player_id === paymentModalPlayer.id)?.pending_amount ??
+            Math.max(0, (userBills[paymentModalPlayer.user_id] || 0) - Number(paymentModalPlayer.paid_amount || 0))
+          )
         : 0;
+
+    if (loading) return <div className="flex items-center justify-center py-20"><div className="spinner" style={{ width: 28, height: 28 }} /></div>;
 
     return (
         <>
@@ -922,29 +1130,42 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                 </div>
                             )}
 
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100" title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}`}>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-100" title={`โอนเงิน: ฿${transferTotal.toLocaleString()} | เงินสด: ฿${cashTotal.toLocaleString()}${totalDiscount > 0 ? ` | ส่วนลด: ฿${totalDiscount.toLocaleString()}` : ''}`}>
                                 <Icon icon="solar:wallet-money-linear" width={16} className="text-green-500" />
                                 <span className="text-xs font-semibold text-green-700">
-                                    เก็บแล้ว ฿{players.reduce((sum, p) => sum + (p.paid_amount || 0), 0).toLocaleString()}
+                                    เก็บแล้ว ฿{totalCollected.toLocaleString()}
                                     <span className="text-gray-400 mx-1">/</span>
-                                    <span className="text-blue-700">฿{players.reduce((sum, p) => sum + (userBills[p.user_id] || 0), 0).toLocaleString()}</span>
-                                    <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">(โอน ฿{transferTotal.toLocaleString()} · สด ฿{cashTotal.toLocaleString()})</span>
+                                    <span className="text-blue-700">฿{totalBilled.toLocaleString()}</span>
+                                    <span className="text-[10px] font-medium text-green-600 opacity-90 ml-1">
+                                        (โอน ฿{transferTotal.toLocaleString()} · สด ฿{cashTotal.toLocaleString()}{totalDiscount > 0 ? ` · ลด ฿${totalDiscount.toLocaleString()}` : ''})
+                                    </span>
                                 </span>
                             </div>
 
-                            {eventCourts.length > 0 && (
-                                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100">
-                                    <Icon icon="solar:clapperboard-edit-linear" width={16} className="text-indigo-500" />
-                                    <span className="text-xs font-semibold text-indigo-700">คอร์ท:</span>
-                                    <div className="flex items-center gap-1 ml-0.5">
-                                        {eventCourts.map(num => (
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100">
+                                <Icon icon="solar:clapperboard-edit-linear" width={16} className="text-indigo-500" />
+                                <span className="text-xs font-semibold text-indigo-700">คอร์ท:</span>
+                                <div className="flex items-center gap-1 ml-0.5">
+                                    {eventCourts.length > 0 ? (
+                                        eventCourts.map(num => (
                                             <span key={num} className={`text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm transition-colors ${activeCourtsSet.has(num) ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
                                                 {num}
                                             </span>
-                                        ))}
-                                    </div>
+                                        ))
+                                    ) : (
+                                        <span className="text-[10px] font-medium text-indigo-400">ยังไม่มี</span>
+                                    )}
                                 </div>
-                            )}
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddCourtModal(true)}
+                                    className="w-5 h-5 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center transition-all ml-1 shadow-xs active:scale-95 cursor-pointer"
+                                    title="เพิ่มหรือจัดการคอร์ท"
+                                    aria-label="เพิ่มคอร์ท"
+                                >
+                                    <Icon icon="solar:add-circle-bold" width={13} />
+                                </button>
+                            </div>
                         </div>
                     </div>
                     {activeSection === 'matches' && (
@@ -1733,6 +1954,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         {/* Payment Status Section */}
                         {activeSection === 'finance' && players.length > 0 && (
                             <div className="space-y-4 animate-in">
+                                {/* Core Billing Summary */}
                                 <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
                                     {[
                                         { label: 'ยอดทั้งหมด', value: totalBilled, icon: 'solar:bill-list-bold-duotone', color: 'text-blue-600', bg: 'bg-blue-50' },
@@ -1750,6 +1972,100 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+
+                                {/* Mini Dashboard: สรุปช่องทางชำระเงินและส่วนลด */}
+                                <div className="card p-4 bg-gradient-to-br from-white to-gray-50/70 border border-gray-200 shadow-sm">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3.5 pb-2.5 border-b border-gray-100">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-7 h-7 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
+                                                <Icon icon="solar:chart-square-bold-duotone" width={18} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">มินิแดชบอร์ดสรุปยอดชำระ</h3>
+                                                <p className="text-[11px] text-gray-500">ยอดจริงหลังคำนวณค่าเพิ่มและส่วนลดของผู้เล่นทุกคน</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                                                {players.length} ผู้เล่นทั้งหมด
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                                        {/* 1. ยอดโอน ทั้งหมด */}
+                                        <div className="rounded-xl p-3.5 bg-blue-50/60 border border-blue-100 hover:border-blue-200 transition-all flex flex-col justify-between">
+                                            <div className="flex items-center justify-between gap-2 mb-2">
+                                                <span className="text-[11px] font-bold text-blue-700">ยอดโอน ทั้งหมด</span>
+                                                <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                                                    <Icon icon="solar:smartphone-line-duotone" width={16} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <p className="text-xl font-black text-blue-900 tabular-nums">
+                                                    ฿{transferTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                                </p>
+                                                <p className="text-[10px] font-semibold text-blue-600/80 mt-1">
+                                                    {transferPlayerCount > 0 ? `${transferPlayerCount} คน โอนเงินแล้ว` : 'ยังไม่มีเงินโอน'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {/* 2. เงินสด ทั้งหมด */}
+                                        <div className="rounded-xl p-3.5 bg-emerald-50/60 border border-emerald-100 hover:border-emerald-200 transition-all flex flex-col justify-between">
+                                            <div className="flex items-center justify-between gap-2 mb-2">
+                                                <span className="text-[11px] font-bold text-emerald-700">เงินสด ทั้งหมด</span>
+                                                <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                                                    <Icon icon="solar:notes-line-duotone" width={16} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <p className="text-xl font-black text-emerald-900 tabular-nums">
+                                                    ฿{cashTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                                </p>
+                                                <p className="text-[10px] font-semibold text-emerald-600/80 mt-1">
+                                                    {cashPlayerCount > 0 ? `${cashPlayerCount} คน จ่ายสดแล้ว` : 'ยังไม่มีเงินสด'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {/* 3. ลด ทั้งหมด */}
+                                        <div className="rounded-xl p-3.5 bg-purple-50/60 border border-purple-100 hover:border-purple-200 transition-all flex flex-col justify-between">
+                                            <div className="flex items-center justify-between gap-2 mb-2">
+                                                <span className="text-[11px] font-bold text-purple-700">ลด ทั้งหมด</span>
+                                                <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center shrink-0">
+                                                    <Icon icon="solar:tag-price-bold-duotone" width={16} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <p className="text-xl font-black text-purple-900 tabular-nums">
+                                                    ฿{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                                </p>
+                                                <p className="text-[10px] font-semibold text-purple-600/80 mt-1">
+                                                    {discountedPlayerCount > 0 ? `${discountedPlayerCount} คน ได้รับส่วนลด` : 'ไม่มีผู้เล่นได้ลด'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {/* 4. ค่าเพิ่ม ทั้งหมด */}
+                                        <div className="rounded-xl p-3.5 bg-amber-50/60 border border-amber-100 hover:border-amber-200 transition-all flex flex-col justify-between">
+                                            <div className="flex items-center justify-between gap-2 mb-2">
+                                                <span className="text-[11px] font-bold text-amber-700">ค่าเพิ่ม ทั้งหมด</span>
+                                                <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                                                    <Icon icon="solar:add-circle-bold-duotone" width={16} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <p className="text-xl font-black text-amber-900 tabular-nums">
+                                                    ฿{totalAdditionalCost.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                                </p>
+                                                <p className="text-[10px] font-semibold text-amber-600/80 mt-1">
+                                                    {additionalCostPlayerCount > 0 ? `${additionalCostPlayerCount} คน มีค่าใช้จ่ายเพิ่ม` : 'ไม่มีค่าเพิ่ม'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="card shadow-sm" style={{ padding: 0, overflow: 'hidden' }}>
@@ -1846,13 +2162,17 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                     return (event.entry_fee || 0) + totalShuttleCost + (ep.additional_cost || 0);
                                                 })();
                                                 const hasDiscount = (ep.discount || 0) > 0;
+                                                const hasUnfinishedMatches = !isPaid && matches.some(m =>
+                                                    (m.status === 'playing' || m.status === 'waiting') &&
+                                                    m.match_players?.some(mp => mp.user_id === ep.user_id)
+                                                );
                                                 return (
                                                     <div
                                                         key={ep.id}
                                                         className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-3 transition-colors"
                                                         style={{
                                                             borderBottom: index < visiblePaymentPlayers.length - 1 ? '1px solid var(--gray-100)' : 'none',
-                                                            background: isPaid ? 'rgba(22, 163, 74, 0.02)' : 'transparent',
+                                                            background: isPaid ? 'rgba(22, 163, 74, 0.02)' : hasUnfinishedMatches ? 'rgba(245, 158, 11, 0.02)' : 'transparent',
                                                         }}
                                                     >
                                                         <div className="flex items-center gap-3 min-w-0">
@@ -1862,9 +2182,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                             >
                                                                 {prof?.display_name?.charAt(0)?.toUpperCase()}
                                                             </div>
-                                                            <p className="text-sm font-medium truncate" style={{ color: 'var(--gray-900)' }}>
-                                                                {truncateName(prof?.display_name, 20)}
-                                                            </p>
+                                                            <div className="min-w-0">
+                                                                <p className="text-sm font-medium truncate" style={{ color: 'var(--gray-900)' }}>
+                                                                    {truncateName(prof?.display_name, 20)}
+                                                                </p>
+                                                            </div>
                                                         </div>
                                                         <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:shrink-0 lg:ml-2">
                                                             {/* Additional Cost Input */}
@@ -1930,18 +2252,26 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                 </span>
                                                             </div>
 
-                                                            <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'}`}>
+                                                            {hasUnfinishedMatches && (
+                                                                <span className="badge badge-warning flex items-center gap-1 shrink-0" title="ยังมีแมตช์ที่ยังไม่กดจบ">
+                                                                    <Icon icon="solar:clock-circle-bold" width={12} /> ยังไม่จบแมตช์
+                                                                </span>
+                                                            )}
+
+                                                            <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'} shrink-0`}>
                                                                 {isPaid ? (ep.payment_method === 'transfer' ? 'โอนเงิน 📱' : ep.payment_method === 'cash' ? 'เงินสด 💵' : 'จ่ายแล้ว') : 'ยังไม่จ่าย'}
                                                             </span>
                                                             <button
                                                                 onClick={() => togglePayment(ep)}
                                                                 disabled={isUpdating}
-                                                                className={`btn btn-sm whitespace-nowrap ml-auto lg:ml-0 ${isPaid ? 'btn-outline' : 'btn-primary'}`}
+                                                                className={`btn btn-sm whitespace-nowrap ml-auto lg:ml-0 ${isPaid ? 'btn-outline' : hasUnfinishedMatches ? 'btn-secondary border-amber-300 text-amber-700 hover:bg-amber-50' : 'btn-primary'}`}
                                                                 style={{ minWidth: '96px', padding: '8px 12px' }}
-                                                                title={isPaid ? 'ยกเลิกรายการรับเงิน' : 'บันทึกรับชำระเงิน'}
+                                                                title={isPaid ? 'ยกเลิกรายการรับเงิน' : hasUnfinishedMatches ? 'ยังมีแมตช์ค้างอยู่ (กดเพื่อดูรายละเอียด)' : 'บันทึกรับชำระเงิน'}
                                                             >
                                                                 {isUpdating ? (
                                                                     <><div className="spinner" style={{ width: 14, height: 14 }} /> บันทึก...</>
+                                                                ) : hasUnfinishedMatches ? (
+                                                                    <><Icon icon="solar:danger-triangle-linear" width={16} className="text-amber-500" /> รับเงิน</>
                                                                 ) : (
                                                                     <><Icon icon={isPaid ? 'solar:undo-left-linear' : 'solar:check-circle-linear'} width={16} /> {isPaid ? 'ยกเลิกรับเงิน' : 'รับเงิน'}</>
                                                                 )}
@@ -2687,6 +3017,247 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         <button onClick={() => setPaymentModalPlayer(null)} className="btn btn-secondary w-full min-h-11">ยกเลิก</button>
                     </div>
                 </div>
+            )}
+
+            {/* Unfinished Matches Warning Modal */}
+            {unfinishedMatchesPlayer && (
+                <div
+                    className="fixed inset-0 z-[125] flex items-center justify-center p-4 animate-in fade-in"
+                    style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(5px)' }}
+                    onClick={() => setUnfinishedMatchesPlayer(null)}
+                >
+                    <div
+                        className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden p-6 sm:p-7 animate-in zoom-in-95 duration-200"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-3 mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center shrink-0">
+                                    <Icon icon="solar:danger-triangle-bold-duotone" width={28} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-black text-gray-950">ยังคิดเงินไม่ได้</h3>
+                                    <p className="text-xs text-gray-500 font-medium mt-0.5">
+                                        {(unfinishedMatchesPlayer.player.profiles as unknown as Profile)?.display_name} ยังมีแมตช์ที่ยังไม่จบ
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setUnfinishedMatchesPlayer(null)}
+                                className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                                aria-label="ปิดหน้าต่าง"
+                            >
+                                <Icon icon="solar:close-circle-linear" width={22} />
+                            </button>
+                        </div>
+
+                        {/* Description Box */}
+                        <div className="rounded-2xl bg-amber-50/70 border border-amber-200 p-4 mb-4 text-xs text-amber-900 leading-relaxed">
+                            <p className="font-bold mb-1 flex items-center gap-1.5 text-amber-800">
+                                <Icon icon="solar:info-circle-bold" width={16} />
+                                ต้องกดจบแมตช์ก่อนรับชำระเงิน
+                            </p>
+                            ผู้เล่นนี้ยังมีแมตช์ที่กำลังแข่งหรือรอคิวอยู่ กรุณาไปบันทึกผลการแข่งขันและกดจบแมตช์ให้เรียบร้อยก่อน เพื่อให้ระบบคำนวณจำนวนลูกแบดและยอดชำระเงินจริงได้อย่างถูกต้อง
+                        </div>
+
+                        {/* List of unfinished matches */}
+                        <div className="space-y-2 mb-5">
+                            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                                รายการแมตช์ที่ค้างอยู่ ({unfinishedMatchesPlayer.matches.length} แมตช์)
+                            </p>
+                            <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                                {unfinishedMatchesPlayer.matches.map((m) => {
+                                    const mNum = m.match_number || (matches.findIndex(item => item.id === m.id) + 1);
+                                    return (
+                                        <div
+                                            key={m.id}
+                                            className="flex items-center justify-between p-3 rounded-xl bg-gray-50 border border-gray-200/80"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-6 h-6 rounded-lg bg-gray-900 text-white flex items-center justify-center text-xs font-black">
+                                                    #{mNum}
+                                                </div>
+                                                <div>
+                                                    <span className="text-xs font-bold text-gray-900 block">
+                                                        แมตช์ #{mNum}
+                                                    </span>
+                                                    {m.court_number && (
+                                                        <span className="text-[10px] text-gray-500 font-semibold">
+                                                            คอร์ท {m.court_number}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+                                                m.status === 'playing'
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : 'bg-amber-100 text-amber-800'
+                                            }`}>
+                                                {m.status === 'playing' ? 'กำลังตี 🏸' : 'รอคิว ⏳'}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="space-y-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setUnfinishedMatchesPlayer(null);
+                                    setActiveSection('matches');
+                                    toast('กรุณาเลือกแมตช์ที่ค้างอยู่แล้วกดบันทึกผล/จบแมตช์', { icon: '👉' });
+                                }}
+                                className="btn btn-primary w-full min-h-11 flex items-center justify-center gap-2 text-sm font-bold shadow-md hover:shadow-lg transition-all cursor-pointer"
+                            >
+                                <Icon icon="solar:sort-horizontal-bold-duotone" width={18} />
+                                ไปหน้าจัดแมตช์เพื่อกดจบ
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setUnfinishedMatchesPlayer(null)}
+                                className="btn btn-secondary w-full min-h-10 text-xs font-bold cursor-pointer"
+                            >
+                                ปิด
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Add Court Management Modal */}
+            {showAddCourtModal && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => !savingCourt && setShowAddCourtModal(false)} />
+                    <div className="relative bg-white rounded-3xl shadow-2xl border border-gray-100 max-w-md w-full p-6 animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                                    <Icon icon="solar:clapperboard-edit-bold" width={22} />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-gray-900">จัดการคอร์ทของก๊วน</h3>
+                                    <p className="text-xs text-gray-500">เพิ่มหรือลบคอร์ทที่ใช้แข่งขันในวันนี้</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowAddCourtModal(false)}
+                                disabled={savingCourt}
+                                className="w-8 h-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                                aria-label="ปิดหน้าต่าง"
+                            >
+                                <Icon icon="solar:close-circle-linear" width={20} />
+                            </button>
+                        </div>
+
+                        {/* Existing Courts */}
+                        <div className="mb-4 p-3.5 rounded-2xl bg-gray-50 border border-gray-100">
+                            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2.5">
+                                คอร์ทปัจจุบัน ({eventCourts.length})
+                            </p>
+                            {eventCourts.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                    {eventCourts.map(num => {
+                                        const isActive = activeCourtsSet.has(num);
+                                        return (
+                                            <div
+                                                key={num}
+                                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs shadow-xs transition-all ${
+                                                    isActive ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-700'
+                                                }`}
+                                            >
+                                                <span>คอร์ท {num}</span>
+                                                {isActive && (
+                                                    <span className="text-[9px] bg-white/20 text-white px-1 py-0.5 rounded">กำลังใช้</span>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveCourt(num)}
+                                                    disabled={savingCourt || isActive}
+                                                    title={isActive ? 'มีแมตช์กำลังใช้คอร์ทนี้' : `ลบคอร์ท ${num}`}
+                                                    className={`w-4 h-4 rounded-full flex items-center justify-center transition-colors ${
+                                                        isActive
+                                                            ? 'opacity-30 cursor-not-allowed'
+                                                            : 'hover:bg-red-100 hover:text-red-600 text-gray-400'
+                                                    }`}
+                                                >
+                                                    <Icon icon="solar:close-circle-bold" width={14} />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <p className="text-xs text-gray-400 italic">ยังไม่มีคอร์ทในก๊วนนี้</p>
+                            )}
+                        </div>
+
+                        {/* Quick Suggestions */}
+                        {['1', '2', '3', '4', '5', '6', '7', '8'].filter(c => !eventCourts.includes(c)).length > 0 && (
+                            <div className="mb-4">
+                                <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                                    กดเพิ่มด่วน
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {['1', '2', '3', '4', '5', '6', '7', '8']
+                                        .filter(c => !eventCourts.includes(c))
+                                        .slice(0, 5)
+                                        .map(c => (
+                                            <button
+                                                key={c}
+                                                type="button"
+                                                onClick={() => handleAddCourt(c)}
+                                                disabled={savingCourt}
+                                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 border border-indigo-100 transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                                            >
+                                                <Icon icon="solar:add-circle-linear" width={13} />
+                                                คอร์ท {c}
+                                            </button>
+                                        ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Custom Court Input Form */}
+                        <form onSubmit={(e) => { e.preventDefault(); handleAddCourt(); }} className="space-y-3">
+                            <div>
+                                <label className="text-[11px] font-bold text-gray-700 block mb-1">
+                                    ระบุหมายเลขหรือชื่อคอร์ทใหม่
+                                </label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="เช่น 3, 4, VIP..."
+                                        value={newCourtInput}
+                                        onChange={(e) => setNewCourtInput(e.target.value)}
+                                        disabled={savingCourt}
+                                        className="flex-1 form-input text-sm h-11 rounded-xl"
+                                        autoFocus
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={savingCourt || !newCourtInput.trim()}
+                                        className="btn btn-primary h-11 px-5 shrink-0"
+                                    >
+                                        {savingCourt ? (
+                                            <div className="spinner" style={{ width: 16, height: 16 }} />
+                                        ) : (
+                                            <>
+                                                <Icon icon="solar:add-circle-linear" width={18} />
+                                                เพิ่ม
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>,
+                document.body
             )}
         </>
     );
