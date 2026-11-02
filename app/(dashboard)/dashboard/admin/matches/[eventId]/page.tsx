@@ -76,6 +76,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [showPlayersSidebar, setShowPlayersSidebar] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [paymentSearchQuery, setPaymentSearchQuery] = useState('');
+    const [paymentTimestamps, setPaymentTimestamps] = useState<Record<string, string>>({});
+    const [paymentSortOrder, setPaymentSortOrder] = useState<'pending_first' | 'paid_first'>('pending_first');
     // Add shuttlecock modal state
     const [addingShuttlecockMatch, setAddingShuttlecockMatch] = useState<{ id: string; currentNumbers: string[]; updatedAt: string } | null>(null);
     const [newShuttlecockNumber, setNewShuttlecockNumber] = useState('');
@@ -209,7 +211,38 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         ]);
         if (financialRows) { setBillingRows(financialRows); setBillingError(''); }
         if (eventRes.data) setEvent(eventRes.data as Event);
-        if (playersRes.data) setPlayers(playersRes.data as EventPlayer[]);
+        if (playersRes.data) {
+            const playersData = playersRes.data as EventPlayer[];
+            setPlayers(playersData);
+            const playerIds = playersData.map(p => p.id);
+            if (playerIds.length > 0) {
+                try {
+                    const { data: payRecords } = await supabase
+                        .from('player_payments')
+                        .select('event_player_id, created_at')
+                        .in('event_player_id', playerIds)
+                        .is('voided_at', null)
+                        .order('created_at', { ascending: false });
+
+                    const timeMap: Record<string, string> = {};
+                    if (payRecords) {
+                        payRecords.forEach((p: { event_player_id: string; created_at: string }) => {
+                            if (!timeMap[p.event_player_id]) {
+                                timeMap[p.event_player_id] = p.created_at;
+                            }
+                        });
+                    }
+                    playersData.forEach((p: any) => {
+                        if (p.paid_at && !timeMap[p.id]) {
+                            timeMap[p.id] = p.paid_at;
+                        }
+                    });
+                    setPaymentTimestamps(prev => ({ ...prev, ...timeMap }));
+                } catch (e) {
+                    console.error('Failed to load payment timestamps:', e);
+                }
+            }
+        }
         if (matchesRes.data) setMatches(matchesRes.data as Match[]);
         setLoading(false);
     }, []);
@@ -354,9 +387,15 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             .on('postgres_changes', { event: '*', schema: 'public', table: 'event_players', filter: `event_id=eq.${eventId}` }, () => loadData(eventId))
             .subscribe();
 
+        // Subscription for player payments (for real-time payment timestamps)
+        const paymentChannel = supabase.channel('payments-rt')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'player_payments' }, () => loadData(eventId))
+            .subscribe();
+
         return () => {
             supabase.removeChannel(matchChannel);
             supabase.removeChannel(playerChannel);
+            supabase.removeChannel(paymentChannel);
         };
     }, [eventId, loadData]);
 
@@ -750,6 +789,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             setUpdatingPayment(null);
 
             if (error) { toast.error(error.message || 'อัปเดตไม่สำเร็จ'); return; }
+            setPaymentTimestamps(prev => {
+                const next = { ...prev };
+                delete next[ep.id];
+                return next;
+            });
             await logActivity({
                 category: 'payment', action: 'payment.unpay',
                 description: `ยกเลิกการชำระเงินของ ${prof?.display_name ?? 'ผู้เล่น'}`,
@@ -805,6 +849,11 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         if (error) {
             toast.error(error.message || 'อัปเดตไม่สำเร็จ');
         } else {
+            const nowIso = new Date().toISOString();
+            setPaymentTimestamps(prev => ({
+                ...prev,
+                [ep.id]: nowIso
+            }));
             const prof = ep.profiles as unknown as Profile;
             await logActivity({
                 category: 'payment', action: 'payment.confirm',
@@ -1056,6 +1105,28 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const matchesWithIndex = matches.map((m, idx) => ({ ...m, originalIndex: idx + 1 }));
     const filteredMatches = matchesWithIndex.filter(m => matchFilter === 'all' || m.status === matchFilter);
     const sortedMatches = [...filteredMatches].sort((a, b) => b.originalIndex - a.originalIndex);
+    const formatPaymentTime = (isoString?: string | null) => {
+        if (!isoString) return '';
+        try {
+            const d = new Date(isoString);
+            if (isNaN(d.getTime())) return '';
+            const now = new Date();
+            const isSameDay = d.toDateString() === now.toDateString();
+            const hours = String(d.getHours()).padStart(2, '0');
+            const minutes = String(d.getMinutes()).padStart(2, '0');
+            const timeStr = `${hours}:${minutes} น.`;
+            if (isSameDay) {
+                return timeStr;
+            }
+            const day = d.getDate();
+            const monthNames = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+            const monthStr = monthNames[d.getMonth()] || '';
+            return `${day} ${monthStr} ${timeStr}`;
+        } catch {
+            return '';
+        }
+    };
+
     const normalizedPaymentQuery = paymentSearchQuery.trim().toLocaleLowerCase('th-TH');
     const visiblePaymentPlayers = [...players]
         .filter(player => paymentFilter === 'all' || player.payment_status === paymentFilter)
@@ -1069,8 +1140,32 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
             return searchableText.includes(normalizedPaymentQuery);
         })
         .sort((first, second) => {
-            if (first.payment_status !== second.payment_status) return first.payment_status === 'pending' ? -1 : 1;
-            return 0;
+            const isPaidFirst = first.payment_status === 'paid';
+            const isPaidSecond = second.payment_status === 'paid';
+
+            // ถ้าจ่ายแล้วทั้งคู่: เรียงจากคนที่จ่ายล่าสุดอยู่บนสุด ดันคนที่จ่ายก่อนหน้าลงไปข้างล่าง
+            if (isPaidFirst && isPaidSecond) {
+                const timeFirst = paymentTimestamps[first.id] ? new Date(paymentTimestamps[first.id]).getTime() : 0;
+                const timeSecond = paymentTimestamps[second.id] ? new Date(paymentTimestamps[second.id]).getTime() : 0;
+                if (timeFirst !== timeSecond) {
+                    return timeSecond - timeFirst; // ล่าสุดอยู่บนสุด (ดันคนจ่ายก่อนลงไป)
+                }
+                return 0;
+            }
+
+            // ถ้ายังไม่จ่ายทั้งคู่: คงตามเวลาเข้าร่วมก๊วน (created_at)
+            if (!isPaidFirst && !isPaidSecond) {
+                const timeFirst = first.created_at ? new Date(first.created_at).getTime() : 0;
+                const timeSecond = second.created_at ? new Date(second.created_at).getTime() : 0;
+                return timeFirst - timeSecond;
+            }
+
+            // กรณีคนหนึ่งจ่ายแล้ว อีกคนยังไม่จ่าย (แสดงในแท็บ 'all'):
+            if (paymentSortOrder === 'paid_first') {
+                return isPaidFirst ? -1 : 1; // คนจ่ายแล้วอยู่บน คนยังไม่จ่ายอยู่ล่าง
+            } else {
+                return isPaidFirst ? 1 : -1; // คนยังไม่จ่ายอยู่บน คนจ่ายแล้วอยู่ล่าง
+            }
         });
     const scoreTeamPlayers = (team: 'A' | 'B') => (scoreMatch?.match_players || [])
         .filter(player => player.team === team)
@@ -2114,7 +2209,20 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center justify-between gap-3 mb-1.5">
                                                     <label htmlFor="payment-player-search" className="text-[11px] font-bold text-gray-600">ค้นหาผู้เล่น</label>
-                                                    <span className="text-[10px] font-semibold text-gray-400">พบ {visiblePaymentPlayers.length} คน</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] font-semibold text-gray-400">พบ {visiblePaymentPlayers.length} คน</span>
+                                                        {paymentFilter === 'all' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setPaymentSortOrder(prev => prev === 'pending_first' ? 'paid_first' : 'pending_first')}
+                                                                className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-gray-200 bg-white hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200 text-gray-600 flex items-center gap-1 transition-all"
+                                                                title={paymentSortOrder === 'pending_first' ? 'คลิกเพื่อสลับ: ให้คนที่จ่ายแล้วอยู่บน' : 'คลิกเพื่อสลับ: ให้คนที่ยังไม่จ่ายอยู่บน'}
+                                                            >
+                                                                <Icon icon="solar:sort-vertical-linear" width={12} className="text-orange-500" />
+                                                                {paymentSortOrder === 'pending_first' ? 'ยังไม่จ่ายอยู่บน' : 'จ่ายแล้วอยู่บน'}
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 <div className="relative">
                                                     <Icon icon="solar:magnifer-linear" width={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -2149,6 +2257,8 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                 const prof = ep.profiles as unknown as Profile;
                                                 const isPaid = ep.payment_status === 'paid';
                                                 const isUpdating = updatingPayment === ep.user_id;
+                                                const paidTimestamp = paymentTimestamps[ep.id] || (ep as any).paid_at;
+                                                const paidTimeText = isPaid ? formatPaymentTime(paidTimestamp) : '';
                                                 const originalBill = (() => {
                                                     if (!event) return 0;
                                                     let totalShuttleCost = 0;
@@ -2186,6 +2296,12 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                 <p className="text-sm font-medium truncate" style={{ color: 'var(--gray-900)' }}>
                                                                     {truncateName(prof?.display_name, 20)}
                                                                 </p>
+                                                                {isPaid && paidTimeText && (
+                                                                    <p className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5" title={`เวลายืนยันชำระเงิน: ${paidTimestamp ? new Date(paidTimestamp).toLocaleString('th-TH') : 'ไม่ระบุ'}`}>
+                                                                        <Icon icon="solar:clock-circle-bold" width={12} className="text-emerald-500 shrink-0" />
+                                                                        จ่ายเมื่อ {paidTimeText}
+                                                                    </p>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:shrink-0 lg:ml-2">
@@ -2258,9 +2374,16 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                                                                 </span>
                                                             )}
 
-                                                            <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'} shrink-0`}>
-                                                                {isPaid ? (ep.payment_method === 'transfer' ? 'โอนเงิน 📱' : ep.payment_method === 'cash' ? 'เงินสด 💵' : 'จ่ายแล้ว') : 'ยังไม่จ่าย'}
-                                                            </span>
+                                                            <div className="flex flex-col items-end gap-0.5 shrink-0">
+                                                                <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'} shrink-0`}>
+                                                                    {isPaid ? (ep.payment_method === 'transfer' ? 'โอนเงิน 📱' : ep.payment_method === 'cash' ? 'เงินสด 💵' : 'จ่ายแล้ว') : 'ยังไม่จ่าย'}
+                                                                </span>
+                                                                {isPaid && paidTimeText && (
+                                                                    <span className="text-[10px] font-semibold text-emerald-700/80 hidden sm:inline-flex items-center gap-0.5" title={`เวลายืนยันชำระเงิน: ${paidTimestamp ? new Date(paidTimestamp).toLocaleString('th-TH') : 'ไม่ระบุ'}`}>
+                                                                        <Icon icon="solar:clock-circle-linear" width={11} /> {paidTimeText}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                             <button
                                                                 onClick={() => togglePayment(ep)}
                                                                 disabled={isUpdating}

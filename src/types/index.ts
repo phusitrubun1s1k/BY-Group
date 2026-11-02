@@ -32,6 +32,7 @@ export interface Event {
 
 export interface EventPlayer {
     paid_amount?: number;
+    paid_at?: string | null;
     id: string;
     event_id: string;
     user_id: string;

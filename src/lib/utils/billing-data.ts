@@ -25,6 +25,7 @@ export interface BillingRow {
     payment_method: 'cash' | 'transfer' | null;
     slip_url: string | null;
     imported_payment: boolean;
+    paid_at?: string | null;
 }
 
 export async function fetchBilling(client: SupabaseClient, filter: { eventId?: string; userId?: string } = {}): Promise<BillingRow[]> {

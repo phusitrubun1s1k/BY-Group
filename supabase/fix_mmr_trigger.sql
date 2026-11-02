@@ -1,15 +1,14 @@
 -- ============================================================
--- 🛠 FIX: MMR Trigger — Revert, Delete & NULL Safety
--- รันไฟล์นี้ใน Supabase SQL Editor เพื่อแก้บั๊ก:
+-- 🛠 FIX: MMR Trigger — Revert, Delete & NULL Safety (With Win-Win Draw Rule)
+-- รันไฟล์นี้ใน Supabase SQL Editor เพื่อแก้บั๊กและอัปเดตกติกาผลเสมอ:
 --   BUG 1: Trigger crash ถ้า team ว่าง (NULL array)
 --   BUG 2: MMR คำนวณซ้ำเมื่อ revert + finish ใหม่
 --   BUG 3: ลบแมตช์ finished ไม่ revert MMR
+--   RULE: เมื่อผลเสมอ: คนแต้มน้อยได้โบนัส +10 MMR, คนเก่งแต้มไม่ลด (0 MMR)
 -- ============================================================
 
 -- ============================================================
 -- 1. ปรับปรุง fn_calculate_match_mmr()
---    - เพิ่ม NULL check
---    - เพิ่ม revert MMR เมื่อ status เปลี่ยนจาก finished → อื่น
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.fn_calculate_match_mmr()
 RETURNS TRIGGER AS $$
@@ -19,15 +18,15 @@ DECLARE
     team_a_avg FLOAT;
     team_b_avg FLOAT;
     expected_a FLOAT;
-    expected_b FLOAT;
     k_factor INT := 64;
     actual_a FLOAT;
-    actual_b FLOAT;
     p_id UUID;
     old_r INT;
     new_r INT;
     diff INT;
     hist RECORD;
+    teammate_id UUID;
+    teammate_r INT;
 BEGIN
     -- ============================================================
     -- STEP A: Revert MMR if match was previously finished
@@ -60,51 +59,86 @@ BEGIN
         END IF;
 
         -- Calculate Average MMR for teams
-        SELECT AVG(mmr) INTO team_a_avg FROM profiles WHERE id = ANY(team_a_ids);
-        SELECT AVG(mmr) INTO team_b_avg FROM profiles WHERE id = ANY(team_b_ids);
+        SELECT AVG(COALESCE(mmr, 1000)) INTO team_a_avg FROM profiles WHERE id = ANY(team_a_ids);
+        SELECT AVG(COALESCE(mmr, 1000)) INTO team_b_avg FROM profiles WHERE id = ANY(team_b_ids);
 
         -- Handle NULL MMR (default to 1000)
         team_a_avg := COALESCE(team_a_avg, 1000);
         team_b_avg := COALESCE(team_b_avg, 1000);
 
-        -- Elo Formula: Expected Score
-        expected_a := 1.0 / (1.0 + pow(10, (team_b_avg - team_a_avg) / 400.0));
-        expected_b := 1.0 - expected_a;
-
-        -- Actual Result
-        IF NEW.team_a_score > NEW.team_b_score THEN
-            actual_a := 1.0;
-            actual_b := 0.0;
-        ELSIF NEW.team_b_score > NEW.team_a_score THEN
-            actual_a := 0.0;
-            actual_b := 1.0;
-        ELSE
-            -- Draw
-            actual_a := 0.5;
-            actual_b := 0.5;
-        END IF;
-
-        -- Update Team A Players
-        FOREACH p_id IN ARRAY team_a_ids LOOP
-            SELECT COALESCE(mmr, 1000) INTO old_r FROM profiles WHERE id = p_id;
+        IF NEW.team_a_score <> NEW.team_b_score THEN
+            -- มีผลแพ้ชนะ: Elo ปกติ
+            expected_a := 1.0 / (1.0 + pow(10, (team_b_avg - team_a_avg) / 400.0));
+            actual_a := CASE WHEN NEW.team_a_score > NEW.team_b_score THEN 1.0 ELSE 0.0 END;
             diff := round(k_factor * (actual_a - expected_a));
-            new_r := old_r + diff;
-            
-            UPDATE profiles SET mmr = new_r WHERE id = p_id;
-            INSERT INTO mmr_history (user_id, match_id, old_mmr, new_mmr, change, reason)
-            VALUES (p_id, NEW.id, old_r, new_r, diff, 'match_result');
-        END LOOP;
 
-        -- Update Team B Players
-        FOREACH p_id IN ARRAY team_b_ids LOOP
-            SELECT COALESCE(mmr, 1000) INTO old_r FROM profiles WHERE id = p_id;
-            diff := round(k_factor * (actual_b - expected_b));
-            new_r := old_r + diff;
-            
-            UPDATE profiles SET mmr = new_r WHERE id = p_id;
-            INSERT INTO mmr_history (user_id, match_id, old_mmr, new_mmr, change, reason)
-            VALUES (p_id, NEW.id, old_r, new_r, diff, 'match_result');
-        END LOOP;
+            -- Update Team A Players
+            FOREACH p_id IN ARRAY team_a_ids LOOP
+                SELECT COALESCE(mmr, 1000) INTO old_r FROM profiles WHERE id = p_id;
+                new_r := old_r + diff;
+                UPDATE profiles SET mmr = new_r WHERE id = p_id;
+                INSERT INTO mmr_history (user_id, match_id, old_mmr, new_mmr, change, reason)
+                VALUES (p_id, NEW.id, old_r, new_r, diff, 'match_result');
+            END LOOP;
+
+            -- Update Team B Players
+            FOREACH p_id IN ARRAY team_b_ids LOOP
+                SELECT COALESCE(mmr, 1000) INTO old_r FROM profiles WHERE id = p_id;
+                new_r := old_r - diff;
+                UPDATE profiles SET mmr = new_r WHERE id = p_id;
+                INSERT INTO mmr_history (user_id, match_id, old_mmr, new_mmr, change, reason)
+                VALUES (p_id, NEW.id, old_r, new_r, -diff, 'match_result');
+            END LOOP;
+        ELSE
+            -- ผลเสมอ (Draw): กติกา Win-Win
+            -- คนแต้มน้อยได้โบนัส +10 MMR, คนเก่งแต้มไม่ลด (0 MMR)
+
+            -- Team A Players
+            FOREACH p_id IN ARRAY team_a_ids LOOP
+                SELECT COALESCE(mmr, 1000) INTO old_r FROM profiles WHERE id = p_id;
+                SELECT user_id INTO teammate_id FROM match_players WHERE match_id = NEW.id AND team = 'A' AND user_id <> p_id LIMIT 1;
+                IF teammate_id IS NOT NULL THEN
+                    SELECT COALESCE(mmr, 1000) INTO teammate_r FROM profiles WHERE id = teammate_id;
+                ELSE
+                    teammate_r := NULL;
+                END IF;
+
+                -- ถ้าต่ำกว่าเฉลี่ยคู่แข่ง หรือต่ำกว่าเพื่อนร่วมทีม -> +10
+                IF old_r < team_b_avg OR (teammate_r IS NOT NULL AND old_r < teammate_r) THEN
+                    diff := 10;
+                ELSE
+                    diff := 0;
+                END IF;
+
+                new_r := old_r + diff;
+                UPDATE profiles SET mmr = new_r WHERE id = p_id;
+                INSERT INTO mmr_history (user_id, match_id, old_mmr, new_mmr, change, reason)
+                VALUES (p_id, NEW.id, old_r, new_r, diff, 'match_result');
+            END LOOP;
+
+            -- Team B Players
+            FOREACH p_id IN ARRAY team_b_ids LOOP
+                SELECT COALESCE(mmr, 1000) INTO old_r FROM profiles WHERE id = p_id;
+                SELECT user_id INTO teammate_id FROM match_players WHERE match_id = NEW.id AND team = 'B' AND user_id <> p_id LIMIT 1;
+                IF teammate_id IS NOT NULL THEN
+                    SELECT COALESCE(mmr, 1000) INTO teammate_r FROM profiles WHERE id = teammate_id;
+                ELSE
+                    teammate_r := NULL;
+                END IF;
+
+                -- ถ้าต่ำกว่าเฉลี่ยคู่แข่ง หรือต่ำกว่าเพื่อนร่วมทีม -> +10
+                IF old_r < team_a_avg OR (teammate_r IS NOT NULL AND old_r < teammate_r) THEN
+                    diff := 10;
+                ELSE
+                    diff := 0;
+                END IF;
+
+                new_r := old_r + diff;
+                UPDATE profiles SET mmr = new_r WHERE id = p_id;
+                INSERT INTO mmr_history (user_id, match_id, old_mmr, new_mmr, change, reason)
+                VALUES (p_id, NEW.id, old_r, new_r, diff, 'match_result');
+            END LOOP;
+        END IF;
     END IF;
 
     RETURN NEW;
