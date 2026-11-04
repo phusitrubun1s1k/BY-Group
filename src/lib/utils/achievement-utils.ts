@@ -1,6 +1,6 @@
 import { createClient } from '@/src/lib/supabase/client';
 import { ACHIEVEMENTS, AchievementMetadata } from '../constants/achievements';
-import { billedShuttleCount, calculateBill } from './billing';
+import { fetchBilling } from './billing-data';
 
 export interface PlayerStats {
     games_count: number;
@@ -110,22 +110,9 @@ export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
         });
     }
 
-    // 4. Calculate total spent
-    let total_spent = 0;
-    eventPlayers?.forEach(ep => {
-        if (ep.payment_status === 'paid' || Number(ep.paid_amount) > 0) {
-            const event = (ep as any).events;
-            if (event) {
-                const eventMatches = matchPlayers?.filter(mp =>
-                    mp.matches?.event_id === ep.event_id &&
-                    (mp.matches?.status === 'finished' || mp.matches?.status === 'playing')
-                ) || [];
-                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                const shuttlesInEvent = eventMatches.reduce((sum, mp) => sum + billedShuttleCount(mp.matches?.shuttlecock_numbers), 0);
-                total_spent += Number(ep.paid_amount ?? calculateBill(event.entry_fee || 0, event.shuttlecock_price || 0, shuttlesInEvent, ep.additional_cost || 0, ep.discount || 0));
-            }
-        }
-    });
+    // 4. Calculate total spent - ยอดที่จ่ายจริงจากฐานข้อมูล (view_billing_details) ที่เดียว
+    const billingRows = await fetchBilling(supabase, { userId }).catch(() => [] as Awaited<ReturnType<typeof fetchBilling>>);
+    const total_spent = billingRows.reduce((sum, r) => sum + Number(r.total_paid || 0), 0);
 
     // 5. Birthday check
     let birthday_play = 0;

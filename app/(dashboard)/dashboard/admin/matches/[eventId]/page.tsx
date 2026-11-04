@@ -12,7 +12,6 @@ import RankBadge from '@/src/components/RankBadge';
 import { getRankFromMMR } from '@/src/lib/rank-utils';
 import CustomSelect, { SelectOption } from '@/src/components/CustomSelect';
 import { truncateName } from '@/src/lib/string-utils';
-import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
 import { logActivity } from '@/src/lib/activity-log';
 import { validateMatchInput, preserveShuttles } from '@/src/lib/utils/match-validation';
 import { fetchBilling, savePayment, cancelPayment, type BillingRow } from '@/src/lib/utils/billing-data';
@@ -121,27 +120,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
         return stats;
     }, [players, matches]);
 
-    // Real-time calculation of current bills per user
+    // ยอดบิลมาจากฐานข้อมูล (view_billing_details) ที่เดียว - ไม่คำนวณซ้ำในหน้าเว็บ
+    // loadData โหลดใหม่ทุกครั้งที่แมตช์/ผู้เล่น/การจ่ายเปลี่ยน (realtime) ยอดจึงอัปเดตตามเดิม
     const userBills = useMemo(() => {
-        if (!event) return {};
         const bills: Record<string, number> = {};
-
-        players.forEach(p => {
-            let totalShuttleCost = 0;
-            const myMatches = matches.filter(m =>
-                (m.status === 'finished' || m.status === 'playing') &&
-                m.match_players?.some(mp => mp.user_id === p.user_id)
-            );
-
-            myMatches.forEach(m => {
-                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
-            });
-
-            bills[p.user_id] = calculateBill(event.entry_fee || 0, 1, totalShuttleCost, p.additional_cost || 0, p.discount || 0);
-        });
+        billingRows.forEach(r => { bills[r.user_id] = Number(r.total_cost); });
         return bills;
-    }, [players, matches, event]);
+    }, [billingRows]);
 
 
     // Gather all used shuttlecocks in the current event to prevent duplicates
@@ -1440,6 +1425,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     updateAdditionalCost={updateAdditionalCost}
     updateDiscount={updateDiscount}
     userBills={userBills}
+    billingRows={billingRows}
     togglePayment={togglePayment}
 />
 

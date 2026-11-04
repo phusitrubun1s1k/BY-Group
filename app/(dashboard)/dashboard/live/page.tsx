@@ -6,7 +6,7 @@ import type { Event, Match, Profile, EventPlayer } from '@/src/types';
 import { Icon } from '@iconify/react';
 import Link from 'next/link';
 import { truncateName } from '@/src/lib/string-utils';
-import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
+import { fetchBilling } from '@/src/lib/utils/billing-data';
 import ChampionsPodium from '@/src/components/ChampionsPodium';
 
 
@@ -34,36 +34,18 @@ export default function LiveBoardPage() {
             if (userId && playersRes.data) {
                 const isCheckedIn = (playersRes.data as any[]).some(ep => ep.user_id === userId);
                 if (isCheckedIn) {
-                    const myFinishedMatches = newMatches.filter(m =>
-                        (m.status === 'finished' || m.status === 'playing') &&
-                        m.match_players?.some(mp => mp.user_id === userId)
-                    );
-
-                    const totalGames = myFinishedMatches.length;
-                    let totalShuttleCost = 0;
-                    let totalShuttles = 0;
-
-                    myFinishedMatches.forEach(m => {
-                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                        const billed = billedShuttleCount(m.shuttlecock_numbers);
-                        totalShuttles += billed;
-                        totalShuttleCost += billed * currentShuttlecockPrice;
-                    });
-
-                    const myEp = (playersRes.data as EventPlayer[]).find(ep => ep.user_id === userId);
-                    const myDiscount = myEp?.discount || 0;
-                    const myAdditionalCost = myEp?.additional_cost || 0;
-                    const originalAmount = currentFee + totalShuttleCost + myAdditionalCost;
-                    const amount = calculateBill(currentFee, currentShuttlecockPrice, totalShuttles, myAdditionalCost, myDiscount);
-
-                    setMyBill({
-                        amount,
-                        originalAmount,
-                        discount: myDiscount,
-                        additionalCost: myAdditionalCost,
-                        totalGames,
-                        totalShuttlecocks: totalShuttles
-                    });
+                    // ยอดบิลมาจากฐานข้อมูล (view_billing_details) ที่เดียว
+                    const [row] = await fetchBilling(supabase, { eventId, userId }).catch(() => [] as Awaited<ReturnType<typeof fetchBilling>>);
+                    if (row) {
+                        setMyBill({
+                            amount: Number(row.total_cost),
+                            originalAmount: Number(row.base_amount) + Number(row.additional_cost),
+                            discount: Number(row.discount),
+                            additionalCost: Number(row.additional_cost),
+                            totalGames: row.total_games,
+                            totalShuttlecocks: row.total_shuttlecocks,
+                        });
+                    }
                 }
             }
         }

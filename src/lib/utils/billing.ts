@@ -13,8 +13,9 @@
 //     ดังนั้นเกมที่ "ยังไม่ได้กรอกเลขลูก" ให้นับเป็น 1 ลูก
 //   - เกมที่เบิกลูกเพิ่ม (กรอกเลขลูกหลายลูก) นับตามจำนวนที่กรอกจริง
 //
-// นี่คือ single source of truth ของฝั่ง TypeScript — ถ้าแก้กติกาที่นี่
-// อย่าลืมแก้ SQL views (supabase/*.sql) ให้ตรงกันด้วย (ใช้ GREATEST(1, count)).
+// ยอดเงินทุกหน้าคำนวณที่ฐานข้อมูลที่เดียว: view_billing_details (+ ฟังก์ชัน billing_shuttle_count)
+// หน้าเว็บดึงผ่าน fetchBilling() ใน billing-data.ts - ห้ามคำนวณยอดเงินซ้ำฝั่ง TypeScript
+// billedShuttleCount ด้านล่างใช้แค่ "นับจำนวนลูก" เพื่อแสดงภาพรวมก๊วน ไม่ได้ใช้คิดเงิน
 
 /** จำนวนลูกที่คิดเงินสำหรับ "หนึ่งเกมที่เล่นแล้ว" = max(1, จำนวนเลขลูกที่กรอกจริง) */
 export function billedShuttleCount(shuttlecockNumbers?: readonly (string | null | undefined)[] | null): number {
@@ -24,7 +25,3 @@ export function billedShuttleCount(shuttlecockNumbers?: readonly (string | null 
     return Math.max(1, valid);
 }
 
-export function calculateBill(entryFee: number, price: number, shuttleCount: number, additionalCost = 0, discount = 0): number {
-    const total = entryFee + price * shuttleCount + additionalCost - discount;
-    return Math.max(0, Math.round((total + Number.EPSILON * Math.max(1, Math.abs(total))) * 100) / 100);
-}

@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Event, EventPlayer, Match, Profile } from '@/src/types';
 import { Icon } from '@iconify/react';
 import { truncateName } from '@/src/lib/string-utils';
-import { billedShuttleCount } from '@/src/lib/utils/billing';
+import type { BillingRow } from '@/src/lib/utils/billing-data';
 
 export interface FinanceSectionProps {
     activeSection: "matches" | "finance";
@@ -37,10 +37,11 @@ export interface FinanceSectionProps {
     updateAdditionalCost: (ep: EventPlayer, additionalCostValue: number) => Promise<boolean>;
     updateDiscount: (ep: EventPlayer, discountValue: number) => Promise<boolean>;
     userBills: Record<string, number>;
+    billingRows: BillingRow[];
     togglePayment: (ep: EventPlayer) => Promise<void>;
 }
 
-export default function FinanceSection({ activeSection, players, totalBilled, totalCollected, totalOutstanding, paidPlayerCount, transferTotal, transferPlayerCount, cashTotal, cashPlayerCount, totalDiscount, discountedPlayerCount, totalAdditionalCost, additionalCostPlayerCount, pendingPlayerCount, setPaymentFilter, paymentFilter, visiblePaymentPlayers, setPaymentSortOrder, paymentSortOrder, paymentSearchQuery, setPaymentSearchQuery, updatingPayment, paymentTimestamps, formatPaymentTime, event, matches, updateAdditionalCost, updateDiscount, userBills, togglePayment }: FinanceSectionProps) {
+export default function FinanceSection({ activeSection, players, totalBilled, totalCollected, totalOutstanding, paidPlayerCount, transferTotal, transferPlayerCount, cashTotal, cashPlayerCount, totalDiscount, discountedPlayerCount, totalAdditionalCost, additionalCostPlayerCount, pendingPlayerCount, setPaymentFilter, paymentFilter, visiblePaymentPlayers, setPaymentSortOrder, paymentSortOrder, paymentSearchQuery, setPaymentSearchQuery, updatingPayment, paymentTimestamps, formatPaymentTime, event, matches, updateAdditionalCost, updateDiscount, userBills, billingRows, togglePayment }: FinanceSectionProps) {
     return (
         <>
             {activeSection === 'finance' && players.length > 0 && (
@@ -255,18 +256,9 @@ export default function FinanceSection({ activeSection, players, totalBilled, to
                                                 const isUpdating = updatingPayment === ep.user_id;
                                                 const paidTimestamp = paymentTimestamps[ep.id] || (ep as any).paid_at;
                                                 const paidTimeText = isPaid ? formatPaymentTime(paidTimestamp) : '';
-                                                const originalBill = (() => {
-                                                    if (!event) return 0;
-                                                    let totalShuttleCost = 0;
-                                                    matches.filter(m =>
-                                                        (m.status === 'finished' || m.status === 'playing') &&
-                                                        m.match_players?.some(mp => mp.user_id === ep.user_id)
-                                                    ).forEach(m => {
-                                                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                                                        totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
-                                                    });
-                                                    return (event.entry_fee || 0) + totalShuttleCost + (ep.additional_cost || 0);
-                                                })();
+                                                // ยอดก่อนส่วนลด = base_amount (ค่าลง + ค่าลูก) + ค่าเพิ่ม จากฐานข้อมูล
+                                                const billRow = billingRows.find(r => r.event_player_id === ep.id);
+                                                const originalBill = Number(billRow?.base_amount ?? 0) + Number(billRow?.additional_cost ?? ep.additional_cost ?? 0);
                                                 const hasDiscount = (ep.discount || 0) > 0;
                                                 const hasUnfinishedMatches = !isPaid && matches.some(m =>
                                                     (m.status === 'playing' || m.status === 'waiting') &&

@@ -9,12 +9,14 @@ import { Icon } from '@iconify/react';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/src/components/ConfirmProvider';
 import { fetchBilling, savePayment, cancelPayment } from '@/src/lib/utils/billing-data';
-import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
+import { billedShuttleCount } from '@/src/lib/utils/billing';
+import type { BillingRow } from '@/src/lib/utils/billing-data';
 
 export default function EventHistoryPage({ params }: { params: Promise<{ id: string }> }) {
     const [event, setEvent] = useState<Event | null>(null);
     const [matches, setMatches] = useState<Match[]>([]);
     const [eventPlayers, setEventPlayers] = useState<EventPlayer[]>([]);
+    const [billingRows, setBillingRows] = useState<BillingRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [updatingPayment, setUpdatingPayment] = useState<string | null>(null);
     const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer' | ''>('');
@@ -54,29 +56,17 @@ export default function EventHistoryPage({ params }: { params: Promise<{ id: str
         if (eventRes.data) setEvent(eventRes.data as Event);
         if (matchesRes.data) setMatches(matchesRes.data as Match[]);
         if (playersRes.data) setEventPlayers(playersRes.data as EventPlayer[]);
+        try { setBillingRows(await fetchBilling(supabase, { eventId: id })); }
+        catch (e) { console.error('Error loading billing:', e); }
         setLoading(false);
     };
 
+    // ยอดบิลมาจากฐานข้อมูล (view_billing_details) ที่เดียว
     const userBills = useMemo(() => {
-        if (!event) return {};
         const bills: Record<string, number> = {};
-
-        eventPlayers.forEach(p => {
-            let totalShuttleCost = 0;
-            const myMatches = matches.filter(m =>
-                (m.status === 'finished' || m.status === 'playing') &&
-                m.match_players?.some(mp => mp.user_id === p.user_id)
-            );
-
-            myMatches.forEach(m => {
-                // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
-            });
-
-            bills[p.user_id] = calculateBill(event.entry_fee || 0, 1, totalShuttleCost, p.additional_cost || 0, p.discount || 0);
-        });
+        billingRows.forEach(r => { bills[r.user_id] = Number(r.total_cost); });
         return bills;
-    }, [eventPlayers, matches, event]);
+    }, [billingRows]);
 
     const allUsedShuttlecocks = useMemo(() => {
         const set = new Set<number>();
