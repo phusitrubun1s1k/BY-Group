@@ -159,10 +159,40 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
     const loadData = async () => {
         setLoading(true);
         const supabase = createClient();
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        // getSession อ่านจาก cookie (ไม่ยิง network); ข้อมูลยังคุมด้วย RLS
+        const { data: { session } } = await supabase.auth.getSession();
+        const currentUser = session?.user ?? null;
         setCurrentUserId(currentUser?.id || null);
+        const isOwn = currentUser?.id === targetUserId;
+        const today = new Date().toLocaleDateString('en-CA');
 
-        const { data: profileData } = await supabase.from('profiles').select('*').eq('id', targetUserId).single();
+        // ยิงทุก query พร้อมกัน (เดิมรอทีละอันประมาณ 9-10 รอบ)
+        const [
+            { data: profileData },
+            { data: matches },
+            achStats,
+            { data: mmrData },
+            { data: seasonData },
+            { data: eventsData },
+            { data: regsData },
+            historyRes,
+            summaryRes,
+        ] = await Promise.all([
+            supabase.from('profiles').select('*').eq('id', targetUserId).single(),
+            supabase.from('match_players').select('*, matches(*)').eq('user_id', targetUserId),
+            fetchPlayerStats(targetUserId),
+            supabase.from('view_mmr_history').select('*').eq('user_id', targetUserId).order('change_date', { ascending: false }).limit(20),
+            supabase.from('season_history').select('*').eq('user_id', targetUserId).order('created_at', { ascending: false }),
+            supabase.from('events').select('id, event_date').eq('status', 'closed').order('event_date', { ascending: true }),
+            supabase.from('event_players').select('event_id').eq('user_id', targetUserId),
+            isOwn
+                ? supabase.from('view_user_billing_history').select('*').eq('user_id', targetUserId).order('event_date', { ascending: false })
+                : Promise.resolve({ data: null }),
+            isOwn
+                ? Promise.resolve(supabase.from('view_billing_summary').select('*').eq('event_date', today).eq('user_id', targetUserId).maybeSingle()).catch(() => ({ data: null }))
+                : Promise.resolve({ data: null }),
+        ]);
+
         if (profileData) {
             setProfile(profileData as Profile);
             setEditForm({
@@ -173,7 +203,6 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             });
         }
 
-        const { data: matches } = await supabase.from('match_players').select('*, matches(*)').eq('user_id', targetUserId);
         if (matches) {
             const finished = matches.filter((mp: any) => mp.matches?.status === 'finished');
             const results = finished.map((mp: any) => getPlayerMatchResult(mp.team, mp.matches.team_a_score, mp.matches.team_b_score));
@@ -190,61 +219,26 @@ export default function ProfileView({ targetUserId }: ProfileViewProps) {
             });
         }
 
-        // Fetch achievements
-        const achStats = await fetchPlayerStats(targetUserId);
-        const achResults = calculateAchievementProgress(achStats);
-        setAchievements(achResults);
-
-        // Fetch MMR history
-        const { data: mmrData } = await supabase.from('view_mmr_history').select('*').eq('user_id', targetUserId).order('change_date', { ascending: false }).limit(20);
-        if (mmrData) {
-            setMmrHistory(mmrData as MMRHistory[]);
-        }
-
-        // Fetch season history
-        const { data: seasonData } = await supabase
-            .from('season_history')
-            .select('*')
-            .eq('user_id', targetUserId)
-            .order('created_at', { ascending: false });
+        setAchievements(calculateAchievementProgress(achStats));
+        if (mmrData) setMmrHistory(mmrData as MMRHistory[]);
         if (seasonData) setSeasonHistory(seasonData);
-
-        // Fetch all closed events
-        const { data: eventsData } = await supabase
-            .from('events')
-            .select('id, event_date')
-            .eq('status', 'closed')
-            .order('event_date', { ascending: true });
         if (eventsData) setAllClosedEvents(eventsData);
+        if (regsData) setUserRegistrations(new Set(regsData.map((r: any) => r.event_id)));
 
-        // Fetch event players registration for target user
-        const { data: regsData } = await supabase
-            .from('event_players')
-            .select('event_id')
-            .eq('user_id', targetUserId);
-        if (regsData) {
-            setUserRegistrations(new Set(regsData.map((r: any) => r.event_id)));
-        }
-
-        // Only fetch billing for own profile
-        if (currentUser?.id === targetUserId) {
-            const { data: historyData } = await supabase.from('view_user_billing_history').select('*').eq('user_id', targetUserId).order('event_date', { ascending: false });
+        if (isOwn) {
+            const historyData = historyRes.data;
             if (historyData) setBillingHistory(historyData as BillingHistory[]);
-
-            const today = new Date().toLocaleDateString('en-CA');
-            try {
-                const { data: summary } = await supabase.from('view_billing_summary').select('*').eq('event_date', today).eq('user_id', targetUserId).maybeSingle();
-                if (summary) {
-                    setTodayBill({
-                        amount: Number(summary.pending_amount ?? summary.total_cost ?? summary.total_amount ?? 0),
-                        paid: summary.payment_status === 'paid',
-                        eventPlayerId: summary.event_player_id || summary.id,
-                        totalGames: summary.total_games || 0,
-                        totalShuttlecocks: summary.total_shuttlecocks || 0,
-                        slipUrl: summary.slip_url || null
-                    });
-                }
-            } catch (e) { }
+            const summary: any = summaryRes.data;
+            if (summary) {
+                setTodayBill({
+                    amount: Number(summary.pending_amount ?? summary.total_cost ?? summary.total_amount ?? 0),
+                    paid: summary.payment_status === 'paid',
+                    eventPlayerId: summary.event_player_id || summary.id,
+                    totalGames: summary.total_games || 0,
+                    totalShuttlecocks: summary.total_shuttlecocks || 0,
+                    slipUrl: summary.slip_url || null
+                });
+            }
         }
 
         setLoading(false);

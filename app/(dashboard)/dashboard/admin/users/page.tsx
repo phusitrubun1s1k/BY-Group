@@ -72,18 +72,22 @@ export default function UserManagementPage() {
         setLoading(true);
         const supabase = createClient();
 
-        // Check if user is admin
-        const { data: { user } } = await supabase.auth.getUser();
+        // Check if user is admin (getSession อ่านจาก cookie; proxy/layout ตรวจ login แล้ว, ข้อมูลคุมด้วย RLS)
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
         if (!user) {
             window.location.href = '/login';
             return;
         }
 
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', user.id)
-            .single();
+        // ตรวจสิทธิ์ + โหลดข้อมูลพร้อมกัน
+        const [{ data: profile }, { data, error }, { data: closedEvents }, { data: contacts }] = await Promise.all([
+            supabase.from('profiles').select('role').eq('id', user.id).single(),
+            supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+            supabase.from('events').select('id, event_date').eq('status', 'closed').order('event_date', { ascending: true }),
+            // อีเมล/เบอร์โทรเก็บแยกใน profile_contacts (อ่านได้เฉพาะแอดมิน/เจ้าของ)
+            supabase.from('profile_contacts').select('user_id, email, phone'),
+        ]);
 
         if (profile?.role !== 'admin') {
             toast.error('คุณไม่มีสิทธิ์เข้าถึงหน้านี้');
@@ -91,23 +95,16 @@ export default function UserManagementPage() {
             return;
         }
 
-        const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .order('created_at', { ascending: false });
-
         if (error) {
             toast.error('ไม่สามารถโหลดข้อมูลสมาชิกได้');
         } else {
-            setUsers(data as Profile[]);
+            const contactMap = new Map((contacts || []).map(c => [c.user_id, c]));
+            setUsers((data as Profile[]).map(u => ({
+                ...u,
+                email: contactMap.get(u.id)?.email ?? u.email,
+                phone: contactMap.get(u.id)?.phone ?? u.phone,
+            })));
         }
-
-        // Fetch all closed events
-        const { data: closedEvents } = await supabase
-            .from('events')
-            .select('id, event_date')
-            .eq('status', 'closed')
-            .order('event_date', { ascending: true });
         if (closedEvents) setAllClosedEvents(closedEvents);
 
         setLoading(false);
@@ -185,8 +182,13 @@ export default function UserManagementPage() {
         const supabase = createClient();
 
         try {
-            // Fetch stats
-            const { data: myMatches } = await supabase.from('match_players').select('*, matches(*)').eq('user_id', user.id);
+            const [{ data: myMatches }, { data: historyData }, { data: badgeData }, { data: mmrData }, { data: regsData }] = await Promise.all([
+                supabase.from('match_players').select('*, matches(*)').eq('user_id', user.id),
+                supabase.from('view_user_billing_history').select('*').eq('user_id', user.id).order('event_date', { ascending: false }).limit(10),
+                supabase.from('view_user_badges').select('*').eq('user_id', user.id).maybeSingle(),
+                supabase.from('view_mmr_history').select('*').eq('user_id', user.id).order('change_date', { ascending: false }).limit(10),
+                supabase.from('event_players').select('event_id').eq('user_id', user.id),
+            ]);
             if (myMatches) {
                 const finished = myMatches.filter((mp: any) => mp.matches?.status === 'finished');
                 const wins = finished.filter((mp: any) =>
@@ -197,27 +199,10 @@ export default function UserManagementPage() {
                 );
                 setUserDetailStats({ totalGames: finished.length, wins: wins.length, losses: finished.length - wins.length, totalPoints });
             }
-
-            // Fetch history
-            const { data: historyData } = await supabase.from('view_user_billing_history').select('*').eq('user_id', user.id).order('event_date', { ascending: false }).limit(10);
             if (historyData) setUserDetailHistory(historyData);
-
-            // Fetch badges
-            const { data: badgeData } = await supabase.from('view_user_badges').select('*').eq('user_id', user.id).maybeSingle();
             if (badgeData) setUserDetailBadges(badgeData);
-
-            // Fetch MMR history
-            const { data: mmrData } = await supabase.from('view_mmr_history').select('*').eq('user_id', user.id).order('change_date', { ascending: false }).limit(10);
             if (mmrData) setUserDetailMMRHistory(mmrData);
-
-            // Fetch registrations for target user
-            const { data: regsData } = await supabase
-                .from('event_players')
-                .select('event_id')
-                .eq('user_id', user.id);
-            if (regsData) {
-                setUserDetailRegistrations(new Set(regsData.map((r: any) => r.event_id)));
-            }
+            if (regsData) setUserDetailRegistrations(new Set(regsData.map((r: any) => r.event_id)));
         } catch (err) {
             console.error('Error fetching user details:', err);
             toast.error('ไม่สามารถโหลดข้อมูลสถิติได้');

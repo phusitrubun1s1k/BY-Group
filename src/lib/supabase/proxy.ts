@@ -29,9 +29,10 @@ export async function updateSession(request: NextRequest) {
         }
     );
 
-    const {
-        data: { user },
-    } = await supabase.auth.getUser();
+    // getClaims ตรวจ JWT ในเครื่อง (ไม่ต้องยิงไป Supabase Auth ทุก request แบบ getUser)
+    // และยังรีเฟรช session ให้อัตโนมัติเมื่อ token หมดอายุ
+    const { data: claimsData } = await supabase.auth.getClaims();
+    const user = claimsData?.claims ?? null;
 
     // Define public routes that don't require authentication
     const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password', '/auth/callback'];

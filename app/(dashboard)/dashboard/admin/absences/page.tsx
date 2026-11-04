@@ -56,60 +56,38 @@ export default function AdminAbsencesPage() {
         setLoading(true);
         const supabase = createClient();
 
-        // 1. Admin Verification
-        const { data: { user: authUser } } = await supabase.auth.getUser();
+        // 1. Admin Verification (getSession อ่านจาก cookie; proxy/layout ตรวจ login แล้ว)
+        const { data: { session } } = await supabase.auth.getSession();
+        const authUser = session?.user;
         if (!authUser) {
             window.location.href = '/login';
             return;
         }
 
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', authUser.id)
-            .single();
-
-        if (profile?.role !== 'admin') {
-            toast.error('คุณไม่มีสิทธิ์เข้าถึงหน้านี้');
-            window.location.href = '/dashboard';
-            return;
-        }
-
         try {
-            // 2. Fetch profiles (excluding guests)
-            const { data: usersData } = await supabase
-                .from('profiles')
-                .select('*')
-                .order('display_name', { ascending: true });
-            
-            const activeUsers = (usersData || []).filter((u: Profile) => !u.is_guest);
-            setUsers(activeUsers);
+            // ตรวจสิทธิ์ + โหลดข้อมูลทั้งหมดพร้อมกัน
+            const [{ data: profile }, { data: usersData }, { data: resets }, { data: eventsData }, { data: regData }, { data: contacts }] = await Promise.all([
+                supabase.from('profiles').select('role').eq('id', authUser.id).single(),
+                supabase.from('profiles').select('*').order('display_name', { ascending: true }),
+                supabase.from('rank_reset_schedule').select('reset_at, executed_at').eq('status', 'executed').order('reset_at', { ascending: false }).limit(1),
+                supabase.from('events').select('id, event_date').eq('status', 'closed').order('event_date', { ascending: true }),
+                supabase.from('event_players').select('user_id, event_id'),
+                supabase.from('profile_contacts').select('user_id, email'),
+            ]);
 
-            // 3. Fetch latest executed reset date
-            const { data: resets } = await supabase
-                .from('rank_reset_schedule')
-                .select('reset_at, executed_at')
-                .eq('status', 'executed')
-                .order('reset_at', { ascending: false })
-                .limit(1);
-            const resetDateStr = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
-            setLatestResetDate(resetDateStr);
+            if (profile?.role !== 'admin') {
+                toast.error('คุณไม่มีสิทธิ์เข้าถึงหน้านี้');
+                window.location.href = '/dashboard';
+                return;
+            }
 
-            // 4. Fetch all closed events
-            const { data: eventsData } = await supabase
-                .from('events')
-                .select('id, event_date')
-                .eq('status', 'closed')
-                .order('event_date', { ascending: true });
+            const emailMap = new Map((contacts || []).map(c => [c.user_id, c.email]));
+            setUsers((usersData || [])
+                .filter((u: Profile) => !u.is_guest)
+                .map((u: Profile) => ({ ...u, email: emailMap.get(u.id) ?? u.email })));
+            setLatestResetDate(resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z');
             setEvents((eventsData || []) as ClosedEvent[]);
-
-            // 5. Fetch all event players (registrations)
-            const { data: regData } = await supabase
-                .from('event_players')
-                .select('user_id, event_id');
-            
-            const regSet = new Set((regData || []).map((r: any) => `${r.user_id}_${r.event_id}`));
-            setRegistrations(regSet);
+            setRegistrations(new Set((regData || []).map((r: any) => `${r.user_id}_${r.event_id}`)));
 
         } catch (err) {
             console.error('Error fetching attendance data:', err);

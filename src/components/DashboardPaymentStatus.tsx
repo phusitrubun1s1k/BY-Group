@@ -37,7 +37,7 @@ export default function DashboardPaymentStatus() {
 
     const loadEvents = async () => {
         const supabase = createClient();
-        const { data } = await supabase.from('events').select('*').order('event_date', { ascending: false });
+        const { data } = await supabase.from('events').select('id, event_date, status').order('event_date', { ascending: false });
         if (data && data.length > 0) {
             setEvents(data as Event[]);
             setSelectedEventId((data[0] as Event).id);
@@ -46,7 +46,8 @@ export default function DashboardPaymentStatus() {
     };
 
     const loadPlayers = useCallback(async () => {
-        if (!selectedEventId) return;
+        // 'latest' = ยังรอโหลดรายการก๊วน ไม่ต้องยิง query เปล่า
+        if (!selectedEventId || selectedEventId === 'latest') return;
         setLoading(true);
         const supabase = createClient();
 
@@ -54,7 +55,7 @@ export default function DashboardPaymentStatus() {
             if (selectedEventId === 'all') {
                 const { data: allEP } = await supabase
                     .from('event_players')
-                    .select('*, profiles(display_name)');
+                    .select('user_id, payment_status, profiles(display_name)');
 
                 if (!allEP) { setLoading(false); return; }
 
@@ -82,7 +83,7 @@ export default function DashboardPaymentStatus() {
             } else {
                 const { data: eventPlayers } = await supabase
                     .from('event_players')
-                    .select('*, profiles(display_name)')
+                    .select('user_id, payment_status, profiles(display_name)')
                     .eq('event_id', selectedEventId);
 
                 if (!eventPlayers) { setLoading(false); return; }

@@ -81,11 +81,20 @@ export default function LeaderboardPage() {
         const supabase = createClient();
 
         // Fetch executed resets as past seasons (นับซีซันตามการกดรีแรงค์)
-        const { data: executedResets } = await supabase
-            .from('rank_reset_schedule')
-            .select('id, reset_at, executed_at, season_label')
-            .eq('status', 'executed')
-            .order('reset_at', { ascending: true });
+        const [{ data: executedResets }, { data: resetData }] = await Promise.all([
+            supabase
+                .from('rank_reset_schedule')
+                .select('id, reset_at, executed_at, season_label')
+                .eq('status', 'executed')
+                .order('reset_at', { ascending: true }),
+            supabase
+                .from('rank_reset_schedule')
+                .select('reset_at, season_label')
+                .eq('status', 'pending')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle(),
+        ]);
         if (executedResets) {
             setPastSeasons(executedResets.map(r => ({
                 label: r.season_label,
@@ -94,14 +103,6 @@ export default function LeaderboardPage() {
             })));
         }
 
-        // Fetch pending rank reset schedule
-        const { data: resetData } = await supabase
-            .from('rank_reset_schedule')
-            .select('reset_at, season_label')
-            .eq('status', 'pending')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
         if (resetData) {
             setResetAt(resetData.reset_at);
             setResetLabel(resetData.season_label);
@@ -130,23 +131,27 @@ export default function LeaderboardPage() {
     async function loadRankings() {
         setLoading(true);
         const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
+        // getSession อ่านจาก cookie ในเครื่อง (ไม่ยิง network) — ใช้แค่หา id สำหรับแสดงผล
+        // ความปลอดภัยของข้อมูลยังคุมด้วย RLS ฝั่ง Supabase เหมือนเดิม
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user ?? null;
         if (user) setCurrentUserId(user.id);
 
         // ===== Past Season: ดึงจาก season_history =====
         if (selectedSeason !== 'current') {
-            const { data: seasonRows } = await supabase
-                .from('season_history')
-                .select('*, profiles:user_id(display_name, skill_level, is_guest)')
-                .eq('season_label', selectedSeason)
-                .order('final_mmr', { ascending: false });
-
-            // ดึงช่วงเวลารีเซ็ตทั้งหมดเพื่อคำนวณวันเริ่มต้น-สิ้นสุดของซีซันนี้
-            const { data: executedResets } = await supabase
-                .from('rank_reset_schedule')
-                .select('id, reset_at, executed_at, season_label')
-                .eq('status', 'executed')
-                .order('reset_at', { ascending: true });
+            // ดึงพร้อมกัน: ข้อมูลซีซัน + ช่วงเวลารีเซ็ตทั้งหมด (คำนวณวันเริ่มต้น-สิ้นสุดของซีซันนี้)
+            const [{ data: seasonRows }, { data: executedResets }] = await Promise.all([
+                supabase
+                    .from('season_history')
+                    .select('*, profiles:user_id(display_name, skill_level, is_guest)')
+                    .eq('season_label', selectedSeason)
+                    .order('final_mmr', { ascending: false }),
+                supabase
+                    .from('rank_reset_schedule')
+                    .select('id, reset_at, executed_at, season_label')
+                    .eq('status', 'executed')
+                    .order('reset_at', { ascending: true }),
+            ]);
 
             let startCutoff: string | null = null;
             let endCutoff: string | null = null;
@@ -216,7 +221,21 @@ export default function LeaderboardPage() {
         }
 
         // ===== Current Season: ดึงจาก view_leaderboard =====
-        const { data: rows, error } = await supabase.from('view_leaderboard').select('*');
+        const [{ data: rows, error }, { data: resets }] = await Promise.all([
+            supabase.from('view_leaderboard').select('*'),
+            supabase
+                .from('rank_reset_schedule')
+                .select('reset_at, executed_at')
+                .eq('status', 'executed')
+                .order('reset_at', { ascending: false })
+                .limit(1),
+        ]);
+        const userIds = rows?.map(r => r.user_id) || [];
+        // badges ไม่ขึ้นกับการคำนวณขาดก๊วน → เริ่มโหลดคู่ขนานไปเลย
+        const badgesPromise = supabase
+            .from('view_user_badges')
+            .select('*')
+            .in('user_id', userIds);
 
         if (error) {
             console.error('Leaderboard error:', error.message, error.details, error.hint);
@@ -231,62 +250,53 @@ export default function LeaderboardPage() {
         const appliedPenalties: Record<string, number> = {};
         const userHasPlayedSinceReset: Record<string, boolean> = {};
         try {
-            // Fetch the latest executed reset date
-            const { data: resets } = await supabase
-                .from('rank_reset_schedule')
-                .select('reset_at, executed_at')
-                .eq('status', 'executed')
-                .order('reset_at', { ascending: false })
-                .limit(1);
             const resetDate = resets && resets[0] ? resets[0].reset_at : '1970-01-01T00:00:00Z';
 
             // เช็ค "กลับเข้าอันดับทันที": นับจากการเล่นแมตช์ที่จบแล้ว (กดชนะ/แพ้/เสมอ = คำนวณแต้ม)
             // หลังรีแรงค์ล่าสุด ไม่ต้องรอ admin ปิดก๊วน — พอมีผลแมตช์ก็โผล่กลับมาในอันดับเลย
-            const { data: seasonFinishedMatches } = await supabase
-                .from('matches')
-                .select('id, created_at')
-                .eq('status', 'finished')
-                .gte('finished_at', resetDate);
+            // ยิง 3 query ที่ขึ้นกับ resetDate พร้อมกัน
+            const [{ data: seasonFinishedMatches }, { data: seasonClosedEvents }, { data: existingPenalties }] = await Promise.all([
+                supabase
+                    .from('matches')
+                    .select('id')
+                    .eq('status', 'finished')
+                    .gte('finished_at', resetDate),
+                supabase
+                    .from('events')
+                    .select('id, event_date')
+                    .eq('status', 'closed')
+                    .gt('event_date', resetDate)
+                    .order('event_date', { ascending: true }),
+                supabase
+                    .from('mmr_history')
+                    .select('user_id, change')
+                    .gte('created_at', resetDate)
+                    .like('reason', 'absence_penalty:%'),
+            ]);
+            const seasonEventIds = (seasonClosedEvents || []).map(e => e.id);
+            const [{ data: seasonMatchPlayers }, { data: registrations }] = await Promise.all([
+                seasonFinishedMatches && seasonFinishedMatches.length > 0
+                    ? supabase.from('match_players').select('user_id').in('match_id', seasonFinishedMatches.map(m => m.id))
+                    : Promise.resolve({ data: [] as { user_id: string }[] }),
+                seasonEventIds.length > 0
+                    ? supabase.from('event_players').select('user_id, event_id').in('event_id', seasonEventIds)
+                    : Promise.resolve({ data: [] as { user_id: string; event_id: string }[] }),
+            ]);
             const playedSinceResetSet = new Set<string>();
-            if (seasonFinishedMatches && seasonFinishedMatches.length > 0) {
-                const { data: seasonMatchPlayers } = await supabase
-                    .from('match_players')
-                    .select('user_id')
-                    .in('match_id', seasonFinishedMatches.map(m => m.id));
-                seasonMatchPlayers?.forEach(mp => playedSinceResetSet.add(mp.user_id));
-            }
+            seasonMatchPlayers?.forEach(mp => playedSinceResetSet.add(mp.user_id));
 
             // ===== นับการขาดก๊วน "เฉพาะซีซันปัจจุบัน" (หลังรีแรงค์ล่าสุด) — อ่านอย่างเดียว =====
             // สำคัญ: หน้า Leaderboard "ไม่ตัด MMR อัตโนมัติ" อีกต่อไป (เดิมตัดย้อนหลังข้ามซีซันทุกครั้งที่เปิดหน้า
             // ทำให้แต้มทุกคนหาย) การตัดแต้มขาดก๊วนต้องทำผ่านสคริปต์แอดมินโดยเจตนาเท่านั้น
-            const { data: seasonClosedEvents } = await supabase
-                .from('events')
-                .select('id, event_date')
-                .eq('status', 'closed')
-                .gt('event_date', resetDate)
-                .order('event_date', { ascending: true });
 
             // อ่านยอดโทษที่ "เคยถูกตัดไปแล้ว" ของแต่ละคน (แสดงผลอย่างเดียว ไม่ตัดเพิ่ม)
-            const { data: existingPenalties } = await supabase
-                .from('mmr_history')
-                .select('user_id, change')
-                .gte('created_at', resetDate)
-                .like('reason', 'absence_penalty:%');
             const penaltyByUser: Record<string, number> = {};
             existingPenalties?.forEach(p => {
                 penaltyByUser[p.user_id] = (penaltyByUser[p.user_id] || 0) + Math.abs(p.change || 0);
             });
 
             // registrations เฉพาะ event ในซีซันนี้
-            const seasonEventIds = (seasonClosedEvents || []).map(e => e.id);
-            let seasonRegSet = new Set<string>();
-            if (seasonEventIds.length > 0) {
-                const { data: registrations } = await supabase
-                    .from('event_players')
-                    .select('user_id, event_id')
-                    .in('event_id', seasonEventIds);
-                seasonRegSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
-            }
+            const seasonRegSet = new Set(registrations?.map(r => `${r.user_id}_${r.event_id}`) || []);
 
             const allUserIds = rows?.map(r => r.user_id) || [];
             for (const userId of allUserIds) {
@@ -319,11 +329,7 @@ export default function LeaderboardPage() {
         }
 
         // Fetch badges for these users
-        const userIds = rows?.map(r => r.user_id) || [];
-        const { data: userBadges } = await supabase
-            .from('view_user_badges')
-            .select('*')
-            .in('user_id', userIds);
+        const { data: userBadges } = await badgesPromise;
 
         const achievementsMap: Record<string, Achievement[]> = {};
         ((userBadges || []) as unknown as UserBadgeRow[]).forEach((ub) => {

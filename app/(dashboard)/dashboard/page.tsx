@@ -1,4 +1,5 @@
 import { createClient } from '@/src/lib/supabase/server';
+import { getCurrentUser, getCurrentProfile } from '@/src/lib/supabase/auth';
 import type { Event } from '@/src/types';
 import Link from 'next/link';
 import { Icon } from '@iconify/react';
@@ -7,18 +8,18 @@ import { fetchBilling } from '@/src/lib/utils/billing-data';
 
 export default async function DashboardPage() {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const { data: profile } = await supabase
-        .from('profiles').select('*').eq('id', user!.id).single();
-
-    // Find the latest open event, or the absolute latest event
-    const { data: events } = await supabase
-        .from('events')
-        .select('*')
-        .order('status', { ascending: false }) // 'open' before 'closed'
-        .order('event_date', { ascending: false })
-        .limit(1);
+    // user/profile มาจาก cache ที่ layout โหลดไว้แล้ว ไม่ยิงซ้ำ
+    const [user, profile, { data: events }] = await Promise.all([
+        getCurrentUser(),
+        getCurrentProfile(),
+        // Find the latest open event, or the absolute latest event
+        supabase
+            .from('events')
+            .select('*')
+            .order('status', { ascending: false }) // 'open' before 'closed'
+            .order('event_date', { ascending: false })
+            .limit(1),
+    ]);
 
     const todayEvent = events?.[0] || null;
 
@@ -33,17 +34,22 @@ export default async function DashboardPage() {
     let billingUnavailable = false;
 
     if (todayEvent) {
-        const { count } = await supabase
-            .from('event_players').select('*', { count: 'exact', head: true }).eq('event_id', todayEvent.id);
+        // ยิงพร้อมกัน: จำนวนผู้เล่น + สถานะการลงชื่อของเรา + บิล
+        const [{ count }, { data }, billingResult] = await Promise.all([
+            supabase.from('event_players').select('*', { count: 'exact', head: true }).eq('event_id', todayEvent.id),
+            supabase.from('event_players').select('*').eq('event_id', todayEvent.id).eq('user_id', user!.id).maybeSingle(),
+            fetchBilling(supabase, { eventId: todayEvent.id, userId: user!.id }).then(
+                r => ({ ok: true as const, r }),
+                e => ({ ok: false as const, e }),
+            ),
+        ]);
         playerCount = count || 0;
-
-        const { data } = await supabase
-            .from('event_players').select('*').eq('event_id', todayEvent.id).eq('user_id', user!.id).maybeSingle();
         myPlayer = data;
 
         if (myPlayer) {
             try {
-                const [summary] = await fetchBilling(supabase, { eventId: todayEvent.id, userId: user!.id });
+                if (!billingResult.ok) throw billingResult.e;
+                const [summary] = billingResult.r;
                 if (!summary) throw new Error('ไม่พบข้อมูลบิล');
                 todayBillAmount = Number(summary.total_cost);
                 myMatchCount = summary.total_games;

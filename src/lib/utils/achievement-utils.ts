@@ -31,35 +31,17 @@ export interface AchievementProgress {
 export async function fetchPlayerStats(userId: string): Promise<PlayerStats> {
     const supabase = createClient();
 
-    // 1. Fetch profile for OG status and member status
-    const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-    const { data: allProfiles } = await supabase
-        .from('profiles')
-        .select('id')
-        .order('created_at', { ascending: true })
-        .limit(10);
+    // ยิงทุก query พร้อมกัน (เดิมรอทีละอัน 4 รอบ)
+    const [{ data: profile }, { data: allProfiles }, { data: eventPlayers }, { data: matchPlayers }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId).single(),
+        supabase.from('profiles').select('id').order('created_at', { ascending: true }).limit(10),
+        supabase.from('event_players').select('*, events(entry_fee, shuttlecock_price)').eq('user_id', userId),
+        supabase.from('match_players').select('*, matches(*, match_players(*, profiles(display_name)))').eq('user_id', userId),
+    ]);
 
     const isOG = allProfiles?.some(p => p.id === userId) ? 1 : 0;
-
-    // 2. Fetch event_players for attendance, spending, and payments
-    const { data: eventPlayers } = await supabase
-        .from('event_players')
-        .select('*, events(entry_fee, shuttlecock_price)')
-        .eq('user_id', userId);
-
     const event_attendance = eventPlayers?.length || 0;
     const paid_on_time = eventPlayers?.filter(ep => ep.payment_status === 'paid').length || 0;
-
-    // 3. Fetch match_players and matches for games and wins
-    const { data: matchPlayers } = await supabase
-        .from('match_players')
-        .select('*, matches(*, match_players(*, profiles(display_name)))')
-        .eq('user_id', userId);
 
     let games_count = 0;
     let win_count = 0;

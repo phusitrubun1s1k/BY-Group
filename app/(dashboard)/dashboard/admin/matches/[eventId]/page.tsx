@@ -16,28 +16,22 @@ import { billedShuttleCount, calculateBill } from '@/src/lib/utils/billing';
 import { logActivity } from '@/src/lib/activity-log';
 import { validateMatchInput, preserveShuttles } from '@/src/lib/utils/match-validation';
 import { fetchBilling, savePayment, cancelPayment, type BillingRow } from '@/src/lib/utils/billing-data';
+import CreateMatchForm from './_components/CreateMatchForm';
+import MatchCards from './_components/MatchCards';
+import ScoreModal from './_components/ScoreModal';
+import PlayerBoardModal from './_components/PlayerBoardModal';
+import AddShuttlecockModal from './_components/AddShuttlecockModal';
+import AddGuestModal from './_components/AddGuestModal';
+import AddPlayerModal from './_components/AddPlayerModal';
+import FinanceSection from './_components/FinanceSection';
+import PlayerSelectionSidebar from './_components/PlayerSelectionSidebar';
+import CheckInPanel from './_components/CheckInPanel';
+import { GUEST_SKILL_OPTIONS, getSkillColor } from './_components/shared';
 
-const GUEST_SKILL_OPTIONS: SelectOption[] = [
-    { value: '', label: '-- เลือกระดับ --', icon: 'solar:question-circle-linear' },
-    { value: 'เปาะแปะ', label: 'เปาะแปะ', icon: 'solar:user-linear' },
-    { value: 'BG', label: 'BG', icon: 'solar:user-bold' },
-    { value: 'N', label: 'N', icon: 'solar:user-bold-duotone' },
-    { value: 'S', label: 'S', icon: 'solar:medal-star-linear' },
-    { value: 'P-', label: 'P-', icon: 'solar:medal-star-bold' },
-    { value: 'P', label: 'P', icon: 'solar:cup-star-linear' },
-    { value: 'P+', label: 'P+', icon: 'solar:cup-star-bold' },
-    { value: 'C', label: 'C', icon: 'solar:crown-minimalistic-linear' },
-    { value: 'B', label: 'B', icon: 'solar:crown-bold' },
-    { value: 'A', label: 'A', icon: 'solar:crown-star-bold' },
-];
+
 
 // Get skill color from the function matching index.ts
-const getSkillColor = (level: string | null | undefined) => {
-    if (['เปาะแปะ', 'BG', 'N', 'S'].includes(level || '')) return '#16a34a';
-    if (['P-', 'P', 'P+'].includes(level || '')) return '#2563eb';
-    if (['C', 'B', 'A'].includes(level || '')) return '#9333ea';
-    return '#6b7280'; // fallback
-};
+
 
 
 export default function MatchMakerPage({ params }: { params: Promise<{ eventId: string }> }) {
@@ -52,6 +46,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [loading, setLoading] = useState(true);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [showForm, setShowForm] = useState(false);
+    const [showPlayerBoard, setShowPlayerBoard] = useState(false);
     const [teamA, setTeamA] = useState<string[]>([]);
     const [teamB, setTeamB] = useState<string[]>([]);
     const [courtNumber, setCourtNumber] = useState('');
@@ -73,7 +68,7 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
     const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
     const [updatingPayment, setUpdatingPayment] = useState<string | null>(null);
     const [sidebarTeam, setSidebarTeam] = useState<'A' | 'B' | null>(null);
-    const [showPlayersSidebar, setShowPlayersSidebar] = useState(true);
+    const [showPlayersSidebar, setShowPlayersSidebar] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [paymentSearchQuery, setPaymentSearchQuery] = useState('');
     const [paymentTimestamps, setPaymentTimestamps] = useState<Record<string, string>>({});
@@ -1265,9 +1260,13 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                     </div>
                     {activeSection === 'matches' && (
                         <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => setShowPlayerBoard(true)} className="btn btn-secondary">
+                                <Icon icon="solar:clipboard-list-linear" width={18} />
+                                กระดานผู้เล่น
+                            </button>
                             <button onClick={() => setShowPlayersSidebar(true)} className="btn btn-secondary">
                                 <Icon icon="solar:users-group-rounded-linear" width={18} />
-                                ผู้เล่นเช็คอิน
+                                รายชื่อผู้เล่น
                                 <span className="badge badge-muted" style={{ marginLeft: '4px' }}>{players.filter(p => p.is_checked_in).length}</span>
                             </button>
                             {event?.status === 'open' && (
@@ -1309,495 +1308,49 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                     </button>
                 </div>
 
-                <div className={`flex gap-6 ${activeSection === 'matches' && showPlayersSidebar ? 'flex-col lg:flex-row' : ''}`}>
+                <div className="flex gap-6">
                     {/* Main Content */}
-                    <div className={activeSection === 'matches' && showPlayersSidebar ? 'flex-1 min-w-0' : 'w-full'}>
+                    <div className="w-full">
 
                         <div className={activeSection === 'matches' ? 'block' : 'hidden'}>
                         {/* Create Form */}
-                        {showForm && (
-                            <div className="card mb-6 animate-in shadow-md sticky z-[40] border border-gray-200 top-[170px] lg:top-[120px] 2xl:top-[88px]" style={{ padding: '24px 32px' }}>
-                                <h3 className="font-bold mb-5 text-lg" style={{ color: 'var(--gray-900)' }}>{editingMatchId ? 'แก้ไขแมตช์' : 'สร้างแมตช์ใหม่'}</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                    {(['A', 'B'] as const).map((team) => {
-                                        const selected = team === 'A' ? teamA : teamB;
-                                        const clr = team === 'A' ? 'var(--orange-500)' : '#3b82f6';
-                                        const selectedProfiles = selected.map(uid => {
-                                            const ep = players.find(p => p.user_id === uid);
-                                            return ep ? (ep.profiles as unknown as Profile) : null;
-                                        }).filter(Boolean) as Profile[];
-
-                                        return (
-                                            <div key={team}>
-                                                <p className="text-sm font-semibold mb-2" style={{ color: clr }}>ทีม {team} ({selected.length}/2)</p>
-
-                                                {/* Selected players chips */}
-                                                <div className="space-y-1.5 mb-3">
-                                                    {selectedProfiles.length > 0 ? selectedProfiles.map((prof) => (
-                                                        <div key={prof.id} className="flex flex-col gap-1 p-3 rounded-xl" style={{
-                                                            background: team === 'A' ? 'rgba(249,115,22,0.06)' : 'rgba(59,130,246,0.06)',
-                                                            border: `1px solid ${clr}`,
-                                                        }}>
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-                                                                    style={{ background: clr, color: 'var(--white)' }}>
-                                                                    <Icon icon="solar:check-read-linear" width={14} />
-                                                                </div>
-                                                                <div className="flex-1 min-w-0">
-                                                                    <span className="text-sm font-bold truncate block" style={{ color: clr }}>{prof.display_name}</span>
-                                                                </div>
-                                                                <button onClick={() => togglePlayer(prof.id, team)} className="shrink-0 p-1 rounded-full transition-colors hover:bg-red-100" style={{ color: 'var(--gray-400)' }}>
-                                                                    <Icon icon="solar:close-circle-linear" width={16} />
-                                                                </button>
-                                                            </div>
-                                                            <div className="flex items-center gap-2 mt-1">
-                                                                <RankBadge mmr={prof.mmr ?? 1000} size="sm" showMMR={false} />
-                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-900 text-white shadow-sm">
-                                                                    {playerStats[prof.id]?.total || 0} เกม
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    )) : (
-                                                        <p className="text-xs px-3 py-2 rounded-lg" style={{ color: 'var(--gray-400)', background: 'var(--gray-50)', border: '1px dashed var(--gray-200)' }}>ยังไม่ได้เลือกผู้เล่น</p>
-                                                    )}
-                                                </div>
-
-                                                {/* Open sidebar button */}
-                                                <button
-                                                    onClick={() => setSidebarTeam(team)}
-                                                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all"
-                                                    style={{
-                                                        border: `1.5px dashed ${clr}`,
-                                                        color: clr,
-                                                        background: 'transparent',
-                                                    }}
-                                                    onMouseEnter={(e) => e.currentTarget.style.background = team === 'A' ? 'rgba(249,115,22,0.04)' : 'rgba(59,130,246,0.04)'}
-                                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                                >
-                                                    <Icon icon="solar:users-group-rounded-linear" width={16} />
-                                                    เลือกผู้เล่น
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-                                    <div className="form-group" style={{ marginBottom: 0 }}>
-                                        <CustomSelect
-                                            label="คอร์ท *"
-                                            value={courtNumber}
-                                            onChangeAction={(val) => setCourtNumber(val || '')}
-                                            options={(event?.courts || []).map(c => ({
-                                                value: c,
-                                                label: `คอร์ท ${c}`,
-                                                icon: 'solar:clapperboard-edit-linear'
-                                            }))}
-                                            icon="solar:clapperboard-edit-bold"
-                                        />
-                                    </div>
-                                    <div className="form-group" style={{ marginBottom: 0 }}>
-                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">
-                                            ลำดับแมตช์ *
-                                            {!matchSeq.trim() && (
-                                                <span className="normal-case font-semibold ml-1" style={{ color: 'var(--warning)' }}>• ยังไม่ได้กรอก</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            className="form-input form-input-plain h-[42px]"
-                                            placeholder="เช่น 1, 2..."
-                                            min={1} step={1} required aria-label="ลำดับแมตช์" value={matchSeq}
-                                            onChange={(e) => setMatchSeq(e.target.value)}
-                                            style={!matchSeq.trim() ? { borderColor: 'var(--warning)', background: 'rgba(245,158,11,0.05)' } : undefined}
-                                        />
-                                    </div>
-                                    <div className="form-group md:col-span-1 col-span-2" style={{ marginBottom: 0 }}>
-                                        <label className="form-label text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">
-                                            หมายเลขลูก *
-                                            {!shuttlecockNumber.trim() && (
-                                                <span className="normal-case font-semibold ml-1" style={{ color: 'var(--warning)' }}>• ยังไม่ได้กรอก</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            className="form-input form-input-plain h-[42px]"
-                                            placeholder="ระบุเบอร์ลูก..."
-                                            required aria-label="หมายเลขลูก" value={shuttlecockNumber}
-                                            onChange={(e) => setShuttlecockNumber(e.target.value)}
-                                            style={!shuttlecockNumber.trim() ? { borderColor: 'var(--warning)', background: 'rgba(245,158,11,0.05)' } : undefined}
-                                        />
-                                        {!shuttlecockNumber.trim() && (
-                                            <p className="text-[10px] mt-1" style={{ color: 'var(--warning)' }}>มีผลต่อการคิดค่าลูก</p>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                    {matchErrors.length > 0 && <div role="alert" className="w-full rounded-lg bg-red-50 p-3 text-sm text-red-700"><p className="font-bold">กรุณาตรวจข้อมูลก่อนบันทึก</p><ul className="list-disc pl-5">{matchErrors.map(message => <li key={message}>{message}</li>)}</ul></div>}
-                                    <button onClick={saveMatch} disabled={creating} className="btn btn-primary btn-sm">
-                                        {creating ? <><div className="spinner" /> {editingMatchId ? 'กำลังบันทึก...' : 'สร้าง...'}</> : (editingMatchId ? 'บันทึกการแก้ไข' : 'สร้างแมตช์')}
-                                    </button>
-                                    <button onClick={() => { setShowForm(false); setTeamA([]); setTeamB([]); setEditingMatchId(null); setCourtNumber(''); setShuttlecockNumber(''); setMatchSeq(''); }} className="btn btn-secondary btn-sm">ยกเลิก</button>
-                                </div>
-                            </div>
-                        )}
+                        <CreateMatchForm
+    showForm={showForm}
+    editingMatchId={editingMatchId}
+    teamA={teamA}
+    teamB={teamB}
+    players={players}
+    togglePlayer={togglePlayer}
+    playerStats={playerStats}
+    setSidebarTeam={setSidebarTeam}
+    courtNumber={courtNumber}
+    setCourtNumber={setCourtNumber}
+    event={event}
+    matchSeq={matchSeq}
+    setMatchSeq={setMatchSeq}
+    shuttlecockNumber={shuttlecockNumber}
+    setShuttlecockNumber={setShuttlecockNumber}
+    matchErrors={matchErrors}
+    saveMatch={saveMatch}
+    creating={creating}
+    setShowForm={setShowForm}
+    setTeamA={setTeamA}
+    setTeamB={setTeamB}
+    setEditingMatchId={setEditingMatchId}
+/>
 
                         {/* Player Selection Sidebar */}
-                        {sidebarTeam && typeof document !== 'undefined' && createPortal(
-                            <>
-                                <style>{`
-                        @keyframes sidebarSlideIn {
-                            from { transform: translateX(100%); }
-                            to { transform: translateX(0); }
-                        }
-                        @keyframes sidebarFadeIn {
-                            from { opacity: 0; }
-                            to { opacity: 1; }
-                        }
-                    `}</style>
-                                <div className="fixed inset-0 z-[100] flex justify-end" style={{ animation: 'sidebarFadeIn 0.2s ease-out' }}>
-                                    {/* Backdrop */}
-                                    <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(4px)' }}
-                                        onClick={() => { setSidebarTeam(null); setSearchQuery(''); }} />
-                                    {/* Right Panel */}
-                                    <div className="relative h-full w-full max-w-md flex flex-col bg-white shadow-2xl"
-                                        style={{ animation: 'sidebarSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}
-                                    >
-                                        {/* Sidebar Header */}
-                                        <div className="flex flex-col gap-3 px-5 py-4 shrink-0 border-b border-gray-100">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm" style={{
-                                                        background: sidebarTeam === 'A' ? 'rgba(249,115,22,0.1)' : 'rgba(59,130,246,0.1)',
-                                                    }}>
-                                                        <Icon icon="solar:users-group-rounded-bold" width={22} style={{
-                                                            color: sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6',
-                                                        }} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="text-base font-bold text-gray-900">เลือกผู้เล่น — ทีม {sidebarTeam}</h3>
-                                                        <p className="text-xs text-gray-500 font-medium">
-                                                            เลือกแล้ว {(sidebarTeam === 'A' ? teamA : teamB).length}/2 คน
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <button onClick={() => { setSidebarTeam(null); setSearchQuery(''); }} className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
-                                                    <Icon icon="solar:close-circle-linear" width={24} />
-                                                </button>
-                                            </div>
-
-                                            {/* Search Box */}
-                                            <div className="relative">
-                                                <Icon icon="solar:magnifer-linear" width={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                                                <input
-                                                    type="text"
-                                                    placeholder="ค้นหาชื่อผู้เล่น..."
-                                                    value={searchQuery}
-                                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                                    className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:border-transparent transition-all"
-                                                    style={{ '--tw-ring-color': sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6' } as React.CSSProperties}
-                                                    autoFocus
-                                                />
-                                                {searchQuery && (
-                                                    <button
-                                                        onClick={() => setSearchQuery('')}
-                                                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                                                    >
-                                                        <Icon icon="solar:close-circle-bold" width={16} />
-                                                    </button>
-                                                )}
-                                            </div>
-
-                                            {/* Team Toggle */}
-                                            <div className="flex bg-gray-100 p-1 rounded-xl">
-                                                <button
-                                                    onClick={() => setSidebarTeam('A')}
-                                                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${sidebarTeam === 'A' ? 'bg-white shadow-sm text-orange-500' : 'text-gray-500 hover:text-gray-700'}`}
-                                                >
-                                                    ทีม A
-                                                </button>
-                                                <button
-                                                    onClick={() => setSidebarTeam('B')}
-                                                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${sidebarTeam === 'B' ? 'bg-white shadow-sm text-blue-500' : 'text-gray-500 hover:text-gray-700'}`}
-                                                >
-                                                    ทีม B
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        {/* Player List */}
-                                        <div className="flex-1 overflow-y-auto px-4 py-3 bg-gray-50/50">
-                                            <div className="space-y-4">
-                                                {/* Regular Players Section */}
-                                                <div>
-                                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-2 mb-2">สมาชิก ({players.filter(p => p.is_checked_in && !p.is_substitute).length})</p>
-                                                    <div className="space-y-2">
-                                                        {players
-                                                            .filter(ep => {
-                                                                const prof = ep.profiles as unknown as Profile;
-                                                                const matchesSearch = !searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase());
-                                                                return ep.is_checked_in && !ep.is_substitute && !prof?.is_guest && matchesSearch;
-                                                            })
-                                                            .sort((a, b) => (playerStats[a.user_id]?.total || 0) - (playerStats[b.user_id]?.total || 0))
-                                                            .map((ep) => {
-                                                                const prof = ep.profiles as unknown as Profile;
-                                                                const team = sidebarTeam;
-                                                                const selected = team === 'A' ? teamA : teamB;
-                                                                const clr = team === 'A' ? 'var(--orange-500)' : '#3b82f6';
-                                                                const inThis = selected.includes(ep.user_id);
-                                                                const inOther = (team === 'A' ? teamB : teamA).includes(ep.user_id);
-                                                                const pstat = playerStats[ep.user_id];
-                                                                const isPaid = ep.payment_status === 'paid';
-                                                                const isDisabled = isPaid && !inThis;
-
-                                                                const skillColor = getSkillColor(prof.skill_level);
-
-                                                                return (
-                                                                    <button key={ep.user_id} onClick={() => !isDisabled && togglePlayer(ep.user_id, team)}
-                                                                        className="w-full flex items-center justify-between p-3.5 rounded-xl border-2 text-left text-sm transition-all"
-                                                                        disabled={isDisabled}
-                                                                        style={{
-                                                                            background: isDisabled ? 'white' : inThis ? (team === 'A' ? 'rgba(249,115,22,0.04)' : 'rgba(59,130,246,0.04)') : 'white',
-                                                                            borderColor: inThis ? clr : 'transparent',
-                                                                            boxShadow: inThis ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
-                                                                            opacity: isDisabled ? 0.6 : inOther ? 0.5 : 1,
-                                                                            cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                                                        }}>
-                                                                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                                                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 shadow-sm"
-                                                                                style={{
-                                                                                    background: inThis ? clr : 'var(--gray-900)',
-                                                                                    color: 'var(--white)'
-                                                                                }}>
-                                                                                {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
-                                                                            </div>
-                                                                            <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
-                                                                                    {truncateName(prof?.display_name, 20)}
-                                                                                </p>
-                                                                                <div className="flex flex-wrap items-center gap-1.5">
-                                                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                        มือ {prof?.skill_level || 'N/A'}
-                                                                                    </span>
-                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                        {pstat?.total || 0} เกม
-                                                                                    </span>
-                                                                                    {inOther && <span className="text-[10px] font-medium text-red-500 bg-red-50 px-1.5 py-0.5 rounded">อยู่ทีม {team === 'A' ? 'B' : 'A'}</span>}
-                                                                                    {pstat?.playing && (
-                                                                                        <span className="text-[10px] font-medium text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
-                                                                                            ติดคิว
-                                                                                        </span>
-                                                                                    )}
-                                                                                </div>
-                                                                            </div>
-                                                                        </div>
-
-                                                                        {/* Right Side */}
-                                                                        {isPaid && !inThis ? (
-                                                                            <span className="flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-full shrink-0 shadow-sm border border-green-100" style={{ background: '#f0fdf4', color: '#16a34a' }}>
-                                                                                <Icon icon="solar:check-circle-bold" width={14} />
-                                                                                จ่ายแล้ว
-                                                                            </span>
-                                                                        ) : inThis ? (
-                                                                            <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: clr, color: 'white' }}>
-                                                                                <Icon icon="solar:check-bold" width={14} />
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="w-5 h-5 rounded-full border-2 border-gray-200 shrink-0" />
-                                                                        )}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                    </div>
-                                                </div>
-
-                                                {/* Substitute Players Section */}
-                                                <div>
-                                                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest px-2 mb-2">ตัวสำรอง ({players.filter(p => p.is_checked_in && p.is_substitute).length})</p>
-                                                    <div className="space-y-2">
-                                                        {players
-                                                            .filter(ep => {
-                                                                const prof = ep.profiles as unknown as Profile;
-                                                                const matchesSearch = !searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase());
-                                                                return ep.is_checked_in && ep.is_substitute && !prof?.is_guest && matchesSearch;
-                                                            })
-                                                            .sort((a, b) => (playerStats[a.user_id]?.total || 0) - (playerStats[b.user_id]?.total || 0))
-                                                            .map((ep) => {
-                                                                const prof = ep.profiles as unknown as Profile;
-                                                                const team = sidebarTeam;
-                                                                const selected = team === 'A' ? teamA : teamB;
-                                                                const clr = team === 'A' ? 'var(--orange-500)' : '#3b82f6';
-                                                                const inThis = selected.includes(ep.user_id);
-                                                                const inOther = (team === 'A' ? teamB : teamA).includes(ep.user_id);
-                                                                const pstat = playerStats[ep.user_id];
-                                                                const isPaid = ep.payment_status === 'paid';
-                                                                const isDisabled = isPaid && !inThis;
-
-                                                                const skillColor = getSkillColor(prof.skill_level);
-
-                                                                return (
-                                                                    <button key={ep.user_id} onClick={() => !isDisabled && togglePlayer(ep.user_id, team)}
-                                                                        className="w-full flex items-center justify-between p-3.5 rounded-xl border-2 text-left text-sm transition-all"
-                                                                        disabled={isDisabled}
-                                                                        style={{
-                                                                            background: isDisabled ? 'white' : inThis ? (team === 'A' ? 'rgba(249,115,22,0.04)' : 'rgba(59,130,246,0.04)') : 'white',
-                                                                            borderColor: inThis ? clr : 'transparent',
-                                                                            boxShadow: inThis ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
-                                                                            opacity: isDisabled ? 0.6 : inOther ? 0.5 : 1,
-                                                                            cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                                                        }}>
-                                                                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                                                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 shadow-sm"
-                                                                                style={{
-                                                                                    background: inThis ? clr : 'rgba(59,130,246,0.1)',
-                                                                                    color: inThis ? 'var(--white)' : '#3b82f6'
-                                                                                }}>
-                                                                                {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : prof?.display_name?.charAt(0)?.toUpperCase()}
-                                                                            </div>
-                                                                            <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
-                                                                                    {truncateName(prof?.display_name, 20)}
-                                                                                </p>
-                                                                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                                                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                        มือ {prof?.skill_level || 'N/A'}
-                                                                                    </span>
-                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                        {pstat?.total || 0} เกม
-                                                                                    </span>
-                                                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 border border-blue-100">สำรอง</span>
-                                                                                </div>
-                                                                            </div>
-                                                                        </div>
-
-                                                                        {/* Right Side */}
-                                                                        {isPaid && !inThis ? (
-                                                                            <span className="flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-full shrink-0 shadow-sm border border-green-100" style={{ background: '#f0fdf4', color: '#16a34a' }}>
-                                                                                <Icon icon="solar:check-circle-bold" width={14} />
-                                                                                จ่ายแล้ว
-                                                                            </span>
-                                                                        ) : inThis ? (
-                                                                            <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: clr, color: 'white' }}>
-                                                                                <Icon icon="solar:check-bold" width={14} />
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="w-5 h-5 rounded-full border-2 border-gray-200 shrink-0" />
-                                                                        )}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                    </div>
-                                                </div>
-
-                                                {/* Guest Players Section */}
-                                                <div>
-                                                    <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest px-2 mb-2">ขาจร ({players.filter(p => p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length})</p>
-                                                    <div className="space-y-2">
-                                                        {players
-                                                            .filter(ep => {
-                                                                const prof = ep.profiles as unknown as Profile;
-                                                                const matchesSearch = !searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase());
-                                                                return ep.is_checked_in && prof?.is_guest && matchesSearch;
-                                                            })
-                                                            .sort((a, b) => (playerStats[a.user_id]?.total || 0) - (playerStats[b.user_id]?.total || 0))
-                                                            .map((ep) => {
-                                                                const prof = ep.profiles as unknown as Profile;
-                                                                const team = sidebarTeam;
-                                                                const selected = team === 'A' ? teamA : teamB;
-                                                                const clr = team === 'A' ? 'var(--orange-500)' : '#3b82f6';
-                                                                const inThis = selected.includes(ep.user_id);
-                                                                const inOther = (team === 'A' ? teamB : teamA).includes(ep.user_id);
-                                                                const pstat = playerStats[ep.user_id];
-                                                                const isPaid = ep.payment_status === 'paid';
-                                                                const isDisabled = isPaid && !inThis;
-
-                                                                return (
-                                                                    <button key={ep.user_id} onClick={() => !isDisabled && togglePlayer(ep.user_id, team)}
-                                                                        className="w-full flex items-center justify-between p-3.5 rounded-xl border-2 text-left text-sm transition-all"
-                                                                        disabled={isDisabled}
-                                                                        style={{
-                                                                            background: isDisabled ? 'white' : inThis ? (team === 'A' ? 'rgba(249,115,22,0.04)' : 'rgba(59,130,246,0.04)') : 'white',
-                                                                            borderColor: inThis ? clr : 'transparent',
-                                                                            boxShadow: inThis ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
-                                                                            opacity: isDisabled ? 0.6 : inOther ? 0.5 : 1,
-                                                                            cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                                                        }}>
-                                                                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                                                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 shadow-sm"
-                                                                                style={{
-                                                                                    background: inThis ? clr : 'var(--purple-600)',
-                                                                                    color: 'var(--white)'
-                                                                                }}>
-                                                                                {inThis ? <Icon icon="solar:check-read-linear" width={20} /> : <Icon icon="solar:ghost-bold" width={20} />}
-                                                                            </div>
-                                                                            <div className="min-w-0 pr-2">
-                                                                                <p className="font-bold text-gray-900 truncate tracking-tight leading-tight mb-1">
-                                                                                    {truncateName(prof?.display_name, 20)}
-                                                                                    {prof?.is_guest && <span className="text-[10px] font-bold text-orange-500 ml-1 bg-orange-50 px-1 py-0.5 rounded">ขาจร</span>}
-                                                                                </p>
-                                                                                <div className="flex flex-wrap items-center gap-1.5">
-                                                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                        มือ {prof?.skill_level || 'N/A'}
-                                                                                    </span>
-                                                                                    <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                                        {pstat?.total || 0} เกม
-                                                                                    </span>
-                                                                                    {inOther && <span className="text-[10px] font-medium text-red-500 bg-red-50 px-1.5 py-0.5 rounded">อยู่ทีม {team === 'A' ? 'B' : 'A'}</span>}
-                                                                                </div>
-                                                                            </div>
-                                                                        </div>
-
-                                                                        {/* Right Side */}
-                                                                        {isPaid && !inThis ? (
-                                                                            <span className="flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-full shrink-0 shadow-sm border border-green-100" style={{ background: '#f0fdf4', color: '#16a34a' }}>
-                                                                                <Icon icon="solar:check-circle-bold" width={14} />
-                                                                                จ่ายแล้ว
-                                                                            </span>
-                                                                        ) : inThis ? (
-                                                                            <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: clr, color: 'white' }}>
-                                                                                <Icon icon="solar:check-bold" width={14} />
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="w-5 h-5 rounded-full border-2 border-gray-200 shrink-0" />
-                                                                        )}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                    </div>
-                                                </div>
-
-                                                {players.filter(ep => {
-                                                    const prof = ep.profiles as unknown as Profile;
-                                                    return ep.is_checked_in && (!searchQuery || prof.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
-                                                }).length === 0 && (
-                                                        <div className="text-center py-10">
-                                                            <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
-                                                                <Icon icon="solar:user-cross-linear" width={24} className="text-gray-400" />
-                                                            </div>
-                                                            <p className="text-sm font-medium text-gray-900">ไม่พบผู้เล่น</p>
-                                                            <p className="text-xs text-gray-500 mt-1">ลองค้นหาด้วยชื่ออื่น</p>
-                                                        </div>
-                                                    )}
-                                            </div>
-                                        </div>
-
-                                        {/* Sidebar Footer */}
-                                        <div className="px-5 py-4 shrink-0 bg-white border-t border-gray-100 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-                                            <button
-                                                onClick={() => { setSidebarTeam(null); setSearchQuery(''); }}
-                                                className="btn w-full shadow-sm text-white"
-                                                style={{ background: sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6', border: 'none' }}
-                                            >
-                                                <Icon icon="solar:check-circle-bold" width={18} />
-                                                เสร็จสิ้น ({(sidebarTeam === 'A' ? teamA : teamB).length}/2)
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </>,
-                            document.body
-                        )}
+                        <PlayerSelectionSidebar
+    sidebarTeam={sidebarTeam}
+    setSidebarTeam={setSidebarTeam}
+    setSearchQuery={setSearchQuery}
+    teamA={teamA}
+    teamB={teamB}
+    searchQuery={searchQuery}
+    players={players}
+    playerStats={playerStats}
+    togglePlayer={togglePlayer}
+/>
 
                                                 {/* Matches */}
                         {matches.length > 0 && (
@@ -1839,591 +1392,56 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                             </div>
                         )}
 
-                        {matches.length === 0 ? (
-                            <div className="card text-center shadow-sm" style={{ padding: '64px 32px' }}>
-                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm" style={{ background: 'var(--gray-100)' }}>
-                                    <Icon icon="solar:sort-horizontal-linear" width={28} style={{ color: 'var(--gray-500)' }} />
-                                </div>
-                                <h2 className="text-xl font-bold mb-2 tracking-tight" style={{ color: 'var(--gray-900)' }}>ยังไม่มีแมตช์</h2>
-                                <p className="text-sm font-medium mb-8" style={{ color: 'var(--gray-500)' }}>กดปุ่ม "สร้างแมตช์ใหม่" เพื่อเริ่มต้นความสนุก</p>
-                            </div>
-                        ) : sortedMatches.length === 0 ? (
-                            <div className="card text-center shadow-sm" style={{ padding: '48px 32px' }}>
-                                <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 bg-gray-50 border">
-                                    <Icon icon="solar:box-minimalistic-linear" width={24} className="text-gray-400" />
-                                </div>
-                                <p className="text-sm font-bold text-gray-900">ไม่มีแมตช์ในหมวดหมู่นี้</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-3">
-                                {sortedMatches.map((match) => {
-                                    const cfg = statusCfg[match.status];
-                                    const tA = match.match_players?.filter((mp) => mp.team === 'A') || [];
-                                    const tB = match.match_players?.filter((mp) => mp.team === 'B') || [];
-                                    const aWon = match.status === 'finished' && match.team_a_score > match.team_b_score;
-                                    const bWon = match.status === 'finished' && match.team_b_score > match.team_a_score;
-                                    return (
-                                        <div key={match.id} className="card shadow-sm" style={{ padding: '20px 24px' }}>
-                                            <div className="flex items-center justify-between mb-4">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <span className="badge badge-muted shrink-0">#{match.match_number || match.originalIndex}</span>
-                                                    <span className={`badge shrink-0 ${cfg.badge}`}>{cfg.label}</span>
-                                                    <span className="text-[10px] font-black px-2 py-0.5 rounded shadow-sm bg-gray-900 text-white shrink-0">
-                                                        คอร์ท {match.court_number}
-                                                    </span>
-                                                    {match.shuttlecock_numbers && match.shuttlecock_numbers.length > 0 && (
-                                                        <div className="flex items-center gap-1.5">
-                                                            {match.shuttlecock_numbers.map((num, idx) => {
-                                                                // ลบได้เฉพาะแมตช์ที่กำลังตี/จบแล้ว และต้องเหลือลูกเบสอย่างน้อย 1 ลูก
-                                                                const canDelete = (match.status === 'playing' || match.status === 'finished') && (match.shuttlecock_numbers?.length || 0) > 1;
-                                                                return (
-                                                                    <span key={idx} className="relative inline-flex items-center shrink-0">
-                                                                        <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold bg-orange-100 text-orange-600 border border-orange-200">
-                                                                            {num}
-                                                                        </span>
-                                                                        {canDelete && (
-                                                                            <button
-                                                                                onClick={() => removeShuttlecock(match.id, idx, num, match.shuttlecock_numbers || [])}
-                                                                                className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-sm border border-white transition-colors"
-                                                                                title={`ลบลูกแบดหมายเลข ${num}`}
-                                                                            >
-                                                                                <Icon icon="solar:close-bold" width={8} />
-                                                                            </button>
-                                                                        )}
-                                                                    </span>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                    {/* Add Shuttlecock Button — รองรับทั้งแมตช์ที่กำลังตีและจบแล้ว
-                                                        เพื่อเติมหมายเลขลูกที่ตกหล่นได้โดยไม่ต้องย้อนสถานะ (ซึ่งจะรีเซ็ตสกอร์) */}
-                                                    {(match.status === 'playing' || match.status === 'finished') && (
-                                                        <button onClick={() => addShuttlecock(match.id, match.shuttlecock_numbers || [])} className="w-6 h-6 rounded flex items-center justify-center bg-gray-50 border border-gray-200 text-gray-500 hover:text-orange-500 hover:border-orange-200 hover:bg-orange-50 transition-colors shrink-0" title={match.shuttlecock_numbers && match.shuttlecock_numbers.length > 0 ? 'เบิกลูกแบดเพิ่ม' : 'เพิ่มหมายเลขลูกที่ตกหล่น'}>
-                                                            <Icon icon="solar:add-circle-linear" width={16} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                                    <div className="flex gap-1.5">
-                                                        {match.status === 'finished' && (
-                                                            <>
-                                                                <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6' }} title="ย้ายกลับไปแก้ไขผลแข่ง">
-                                                                    <Icon icon="solar:refresh-linear" width={14} /> เล่นต่อ/แก้ไข
-                                                                </button>
-                                                                <button onClick={() => handleDeleteMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }} title="ลบแมตช์ที่จบแล้วนี้">
-                                                                    <Icon icon="solar:trash-bin-trash-bold" width={14} /> ลบ
-                                                                </button>
-                                                            </>
-                                                        )}
-                                                        {match.status !== 'finished' && (
-                                                            <>
-                                                                <button onClick={() => editMatch(match)} className="btn btn-sm" style={{ background: 'rgba(59,130,246,0.06)', color: '#3b82f6' }}>
-                                                                    <Icon icon="solar:pen-linear" width={14} /> แก้ไข
-                                                                </button>
-                                                                {match.status === 'waiting' && (
-                                                                    <div className="flex gap-1.5">
-                                                                        <button onClick={() => updateMatchStatus(match.id, 'playing')} className="btn btn-sm" style={{ background: 'rgba(22,163,74,0.06)', color: 'var(--success)' }}>
-                                                                            <Icon icon="solar:play-linear" width={14} /> เริ่ม
-                                                                        </button>
-                                                                        <button onClick={() => handleDeleteMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }} title="ลบแมตช์ที่รอคิวนี้">
-                                                                            <Icon icon="solar:trash-bin-trash-bold" width={14} /> ลบ
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-                                                                {match.status === 'playing' && (
-                                                                    <div className="flex gap-1.5">
-                                                                        <button onClick={() => handleCancelMatch(match.id)} className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.06)', color: 'var(--error)' }}>
-                                                                            <Icon icon="solar:trash-bin-trash-bold" width={14} /> ยกเลิก
-                                                                        </button>
-                                                                        <button onClick={() => updateMatchStatus(match.id, 'finished')} className="btn btn-sm" style={{ background: 'rgba(249,115,22,0.06)', color: 'var(--orange-500)' }}>
-                                                                            <Icon icon="solar:check-circle-linear" width={14} /> จบ
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-                                                            </>
-                                                        )}
-                                                    </div>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <div className="flex-1 p-3 rounded-xl min-w-0" style={{
-                                                    background: aWon ? 'rgba(249,115,22,0.06)' : 'rgba(249,115,22,0.03)',
-                                                    border: `1.5px solid ${aWon ? 'var(--orange-500)' : 'rgba(249,115,22,0.1)'}`,
-                                                }}>
-                                                    <div className="flex items-center gap-1.5 mb-1">
-                                                        <p className="text-xs font-semibold" style={{ color: 'var(--orange-500)' }}>ทีม A</p>
-                                                        {aWon && <Icon icon="solar:cup-star-bold" width={14} style={{ color: 'var(--orange-500)' }} />}
-                                                        {!aWon && !bWon && match.status === 'finished' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-100">เสมอ</span>}
-                                                    </div>
-                                                    {tA.map((mp) => {
-                                                        const isMe = mp.user_id === currentUserId;
-                                                        const ep = players.find(p => p.user_id === mp.user_id);
-                                                        const isPaid = ep?.payment_status === 'paid';
-                                                        return (
-                                                            <div key={mp.id} className="py-2 border-b border-orange-100 last:border-0 min-w-0">
-                                                                <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
-                                                                    <p className="text-sm font-bold truncate" style={{
-                                                                        color: isMe ? 'var(--orange-600)' : 'var(--gray-900)',
-                                                                    }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
-                                                                        {(mp.profiles as unknown as Profile)?.is_guest && <span className="text-[10px] font-bold text-orange-500 mx-1 bg-orange-50 px-1 py-0.5 rounded">ขาจร</span>}
-                                                                        (#{match.match_number || match.originalIndex})
-                                                                    </p>
-                                                                    {isPaid && (
-                                                                        <span title="จ่ายแล้ว" className="flex shrink-0">
-                                                                            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-500" />
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                            </div>
-                                                        );
-                                                    })}
-                                                    {Array.from({ length: Math.max(0, 2 - tA.length) }).map((_, idx) => (
-                                                        <div key={`empty-A-${idx}`} className="py-2 border-b border-orange-100 last:border-0 min-w-0 flex items-center">
-                                                            <p className="text-sm font-bold truncate italic text-gray-400 opacity-70">
-                                                                (ผู้เล่นขาจร)
-                                                            </p>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <div className="shrink-0 text-center px-1.5 py-0.5 rounded-full bg-slate-50 border border-slate-100">
-                                                    {match.status === 'finished' ? (
-                                                        <p className="text-lg font-bold" style={{ color: 'var(--gray-900)' }}>{match.team_a_score} - {match.team_b_score}</p>
-                                                    ) : (
-                                                        <div className="flex flex-col items-center">
-                                                            <span className="text-[9px] font-black tracking-tighter text-indigo-300 uppercase leading-none mb-0.5 italic">VS</span>
-                                                            <div className="text-[14px] font-black text-indigo-600 leading-none">
-                                                                {match.court_number}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div className="flex-1 p-3 rounded-xl min-w-0" style={{
-                                                    background: bWon ? 'rgba(59,130,246,0.06)' : 'rgba(59,130,246,0.03)',
-                                                    border: `1.5px solid ${bWon ? '#3b82f6' : 'rgba(59,130,246,0.1)'}`,
-                                                }}>
-                                                    <div className="flex items-center gap-1.5 mb-1">
-                                                        <p className="text-xs font-semibold" style={{ color: '#3b82f6' }}>ทีม B</p>
-                                                        {bWon && <Icon icon="solar:cup-star-bold" width={14} style={{ color: '#3b82f6' }} />}
-                                                        {!aWon && !bWon && match.status === 'finished' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-100">เสมอ</span>}
-                                                    </div>
-                                                    {tB.map((mp) => {
-                                                        const isMe = mp.user_id === currentUserId;
-                                                        const ep = players.find(p => p.user_id === mp.user_id);
-                                                        const isPaid = ep?.payment_status === 'paid';
-                                                        return (
-                                                            <div key={mp.id} className="py-2 border-b border-blue-100 last:border-0 min-w-0">
-                                                                <div className="flex items-center justify-between gap-2 mb-1 min-w-0">
-                                                                    <p className="text-sm font-bold truncate" style={{
-                                                                        color: isMe ? '#2563eb' : 'var(--gray-900)',
-                                                                    }}>
-                                                                        {truncateName((mp.profiles as unknown as Profile)?.display_name, 14)} {isMe && '(คุณ)'}
-                                                                        {(mp.profiles as unknown as Profile)?.is_guest && <span className="text-[10px] font-bold text-blue-500 mx-1 bg-blue-50 px-1 py-0.5 rounded">ขาจร</span>}
-                                                                        (#{match.match_number || match.originalIndex})
-                                                                    </p>
-                                                                    {isPaid && (
-                                                                        <span title="จ่ายแล้ว" className="flex shrink-0">
-                                                                            <Icon icon="solar:check-circle-bold" width={14} className="text-emerald-500" />
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <RankBadge mmr={(mp.profiles as unknown as Profile)?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                            </div>
-                                                        );
-                                                    })}
-                                                    {Array.from({ length: Math.max(0, 2 - tB.length) }).map((_, idx) => (
-                                                        <div key={`empty-B-${idx}`} className="py-2 border-b border-blue-100 last:border-0 min-w-0 flex items-center">
-                                                            <p className="text-sm font-bold truncate italic text-gray-400 opacity-70">
-                                                                (ผู้เล่นขาจร)
-                                                            </p>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
+                        {/* Match Cards */}
+                        <MatchCards
+    matches={matches}
+    sortedMatches={sortedMatches}
+    statusCfg={statusCfg}
+    removeShuttlecock={removeShuttlecock}
+    addShuttlecock={addShuttlecock}
+    updateMatchStatus={updateMatchStatus}
+    handleDeleteMatch={handleDeleteMatch}
+    editMatch={editMatch}
+    handleCancelMatch={handleCancelMatch}
+    currentUserId={currentUserId}
+    players={players}
+/>
                         </div>
 
                         {/* Payment Status Section */}
-                        {activeSection === 'finance' && players.length > 0 && (
-                            <div className="space-y-4 animate-in">
-                                {/* Core Billing Summary */}
-                                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-                                    {[
-                                        { label: 'ยอดทั้งหมด', value: totalBilled, icon: 'solar:bill-list-bold-duotone', color: 'text-blue-600', bg: 'bg-blue-50' },
-                                        { label: 'เก็บแล้ว', value: totalCollected, icon: 'solar:wallet-money-bold-duotone', color: 'text-green-600', bg: 'bg-green-50' },
-                                        { label: 'ยอดค้าง', value: totalOutstanding, icon: 'solar:clock-circle-bold-duotone', color: 'text-orange-600', bg: 'bg-orange-50' },
-                                        { label: 'ชำระแล้ว', value: paidPlayerCount, suffix: `/${players.length} คน`, icon: 'solar:verified-check-bold-duotone', color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                                    ].map(summary => (
-                                        <div key={summary.label} className="card flex items-center gap-3" style={{ padding: '16px 18px' }}>
-                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${summary.bg} ${summary.color}`}>
-                                                <Icon icon={summary.icon} width={21} />
-                                            </div>
-                                            <div className="min-w-0">
-                                                <p className="text-[11px] font-semibold text-gray-500">{summary.label}</p>
-                                                <p className="text-lg font-black text-gray-900 truncate">{summary.suffix ? summary.value.toLocaleString() : `฿${summary.value.toLocaleString()}`} {summary.suffix && <span className="text-xs font-semibold text-gray-500">{summary.suffix}</span>}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Mini Dashboard: สรุปช่องทางชำระเงินและส่วนลด */}
-                                <div className="card p-4 bg-gradient-to-br from-white to-gray-50/70 border border-gray-200 shadow-sm">
-                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3.5 pb-2.5 border-b border-gray-100">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-7 h-7 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
-                                                <Icon icon="solar:chart-square-bold-duotone" width={18} />
-                                            </div>
-                                            <div>
-                                                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">มินิแดชบอร์ดสรุปยอดชำระ</h3>
-                                                <p className="text-[11px] text-gray-500">ยอดจริงหลังคำนวณค่าเพิ่มและส่วนลดของผู้เล่นทุกคน</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
-                                                {players.length} ผู้เล่นทั้งหมด
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                                        {/* 1. ยอดโอน ทั้งหมด */}
-                                        <div className="rounded-xl p-3.5 bg-blue-50/60 border border-blue-100 hover:border-blue-200 transition-all flex flex-col justify-between">
-                                            <div className="flex items-center justify-between gap-2 mb-2">
-                                                <span className="text-[11px] font-bold text-blue-700">ยอดโอน ทั้งหมด</span>
-                                                <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                                                    <Icon icon="solar:smartphone-line-duotone" width={16} />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <p className="text-xl font-black text-blue-900 tabular-nums">
-                                                    ฿{transferTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                                </p>
-                                                <p className="text-[10px] font-semibold text-blue-600/80 mt-1">
-                                                    {transferPlayerCount > 0 ? `${transferPlayerCount} คน โอนเงินแล้ว` : 'ยังไม่มีเงินโอน'}
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {/* 2. เงินสด ทั้งหมด */}
-                                        <div className="rounded-xl p-3.5 bg-emerald-50/60 border border-emerald-100 hover:border-emerald-200 transition-all flex flex-col justify-between">
-                                            <div className="flex items-center justify-between gap-2 mb-2">
-                                                <span className="text-[11px] font-bold text-emerald-700">เงินสด ทั้งหมด</span>
-                                                <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                                                    <Icon icon="solar:notes-line-duotone" width={16} />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <p className="text-xl font-black text-emerald-900 tabular-nums">
-                                                    ฿{cashTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                                </p>
-                                                <p className="text-[10px] font-semibold text-emerald-600/80 mt-1">
-                                                    {cashPlayerCount > 0 ? `${cashPlayerCount} คน จ่ายสดแล้ว` : 'ยังไม่มีเงินสด'}
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {/* 3. ลด ทั้งหมด */}
-                                        <div className="rounded-xl p-3.5 bg-purple-50/60 border border-purple-100 hover:border-purple-200 transition-all flex flex-col justify-between">
-                                            <div className="flex items-center justify-between gap-2 mb-2">
-                                                <span className="text-[11px] font-bold text-purple-700">ลด ทั้งหมด</span>
-                                                <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center shrink-0">
-                                                    <Icon icon="solar:tag-price-bold-duotone" width={16} />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <p className="text-xl font-black text-purple-900 tabular-nums">
-                                                    ฿{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                                </p>
-                                                <p className="text-[10px] font-semibold text-purple-600/80 mt-1">
-                                                    {discountedPlayerCount > 0 ? `${discountedPlayerCount} คน ได้รับส่วนลด` : 'ไม่มีผู้เล่นได้ลด'}
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {/* 4. ค่าเพิ่ม ทั้งหมด */}
-                                        <div className="rounded-xl p-3.5 bg-amber-50/60 border border-amber-100 hover:border-amber-200 transition-all flex flex-col justify-between">
-                                            <div className="flex items-center justify-between gap-2 mb-2">
-                                                <span className="text-[11px] font-bold text-amber-700">ค่าเพิ่ม ทั้งหมด</span>
-                                                <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
-                                                    <Icon icon="solar:add-circle-bold-duotone" width={16} />
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <p className="text-xl font-black text-amber-900 tabular-nums">
-                                                    ฿{totalAdditionalCost.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                                </p>
-                                                <p className="text-[10px] font-semibold text-amber-600/80 mt-1">
-                                                    {additionalCostPlayerCount > 0 ? `${additionalCostPlayerCount} คน มีค่าใช้จ่ายเพิ่ม` : 'ไม่มีค่าเพิ่ม'}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="card shadow-sm" style={{ padding: 0, overflow: 'hidden' }}>
-                                <div
-                                    className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4"
-                                    style={{ borderBottom: '1px solid var(--gray-200)' }}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.06)' }}>
-                                            <Icon icon="solar:wallet-money-linear" width={20} style={{ color: 'var(--success)' }} />
-                                        </div>
-                                        <div className="text-left">
-                                            <p className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>สถานะการจ่ายเงิน</p>
-                                            <p className="text-xs mt-0.5" style={{ color: 'var(--gray-500)' }}>ค้นหา แก้ยอด และรับชำระเงินของผู้เล่นแต่ละคน</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {players.filter(p => p.payment_status === 'pending').length > 0 && (
-                                            <span className="badge badge-warning">
-                                                ค้าง {players.filter(p => p.payment_status === 'pending').length}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-
-                                    <div className="flex flex-col">
-                                        {/* Payment Search Box */}
-                                        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50 flex flex-col lg:flex-row gap-3">
-                                            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-white border border-gray-200 overflow-x-auto shrink-0">
-                                                {([
-                                                    { id: 'all', label: 'ทั้งหมด', count: players.length },
-                                                    { id: 'pending', label: 'ยังไม่จ่าย', count: pendingPlayerCount },
-                                                    { id: 'paid', label: 'จ่ายแล้ว', count: paidPlayerCount },
-                                                ] as const).map(filter => (
-                                                    <button
-                                                        key={filter.id}
-                                                        type="button"
-                                                        onClick={() => setPaymentFilter(filter.id)}
-                                                        className={`min-h-9 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${paymentFilter === filter.id ? 'bg-orange-500 text-white shadow-sm' : 'text-gray-500 hover:bg-orange-50 hover:text-orange-600'}`}
-                                                    >
-                                                        {filter.label}
-                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] ${paymentFilter === filter.id ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>{filter.count}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center justify-between gap-3 mb-1.5">
-                                                    <label htmlFor="payment-player-search" className="text-[11px] font-bold text-gray-600">ค้นหาผู้เล่น</label>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-[10px] font-semibold text-gray-400">พบ {visiblePaymentPlayers.length} คน</span>
-                                                        {paymentFilter === 'all' && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setPaymentSortOrder(prev => prev === 'pending_first' ? 'paid_first' : 'pending_first')}
-                                                                className="text-[10px] font-bold px-2 py-0.5 rounded-md border border-gray-200 bg-white hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200 text-gray-600 flex items-center gap-1 transition-all"
-                                                                title={paymentSortOrder === 'pending_first' ? 'คลิกเพื่อสลับ: ให้คนที่จ่ายแล้วอยู่บน' : 'คลิกเพื่อสลับ: ให้คนที่ยังไม่จ่ายอยู่บน'}
-                                                            >
-                                                                <Icon icon="solar:sort-vertical-linear" width={12} className="text-orange-500" />
-                                                                {paymentSortOrder === 'pending_first' ? 'ยังไม่จ่ายอยู่บน' : 'จ่ายแล้วอยู่บน'}
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                <div className="relative">
-                                                    <Icon icon="solar:magnifer-linear" width={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                                                    <input
-                                                        id="payment-player-search"
-                                                        type="search"
-                                                        autoComplete="off"
-                                                        aria-label="ค้นหาผู้เล่นจากชื่อหรือระดับมือ"
-                                                        placeholder="พิมพ์ชื่อ ชื่อจริง หรือระดับมือ..."
-                                                        value={paymentSearchQuery}
-                                                        onChange={(e) => setPaymentSearchQuery(e.target.value)}
-                                                        onKeyDown={(e) => { if (e.key === 'Escape') setPaymentSearchQuery(''); }}
-                                                        className="w-full min-h-11 pl-10 pr-10 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400 transition-all"
-                                                    />
-                                                    {paymentSearchQuery && (
-                                                        <button
-                                                            type="button"
-                                                            aria-label="ล้างคำค้นหา"
-                                                            onClick={() => setPaymentSearchQuery('')}
-                                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-orange-600 hover:bg-orange-50"
-                                                        >
-                                                            <Icon icon="solar:close-circle-bold" width={18} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Sort: pending first, then paid */}
-                                        {visiblePaymentPlayers
-                                            .map((ep, index) => {
-                                                const prof = ep.profiles as unknown as Profile;
-                                                const isPaid = ep.payment_status === 'paid';
-                                                const isUpdating = updatingPayment === ep.user_id;
-                                                const paidTimestamp = paymentTimestamps[ep.id] || (ep as any).paid_at;
-                                                const paidTimeText = isPaid ? formatPaymentTime(paidTimestamp) : '';
-                                                const originalBill = (() => {
-                                                    if (!event) return 0;
-                                                    let totalShuttleCost = 0;
-                                                    matches.filter(m =>
-                                                        (m.status === 'finished' || m.status === 'playing') &&
-                                                        m.match_players?.some(mp => mp.user_id === ep.user_id)
-                                                    ).forEach(m => {
-                                                        // เกมที่เล่นแล้วนับอย่างน้อย 1 ลูก (เบิกเพิ่มนับตามจริง)
-                                                        totalShuttleCost += billedShuttleCount(m.shuttlecock_numbers) * (event.shuttlecock_price || 0);
-                                                    });
-                                                    return (event.entry_fee || 0) + totalShuttleCost + (ep.additional_cost || 0);
-                                                })();
-                                                const hasDiscount = (ep.discount || 0) > 0;
-                                                const hasUnfinishedMatches = !isPaid && matches.some(m =>
-                                                    (m.status === 'playing' || m.status === 'waiting') &&
-                                                    m.match_players?.some(mp => mp.user_id === ep.user_id)
-                                                );
-                                                return (
-                                                    <div
-                                                        key={ep.id}
-                                                        className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-3 transition-colors"
-                                                        style={{
-                                                            borderBottom: index < visiblePaymentPlayers.length - 1 ? '1px solid var(--gray-100)' : 'none',
-                                                            background: isPaid ? 'rgba(22, 163, 74, 0.02)' : hasUnfinishedMatches ? 'rgba(245, 158, 11, 0.02)' : 'transparent',
-                                                        }}
-                                                    >
-                                                        <div className="flex items-center gap-3 min-w-0">
-                                                            <div
-                                                                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-                                                                style={{ background: 'var(--gray-900)', color: 'var(--white)' }}
-                                                            >
-                                                                {prof?.display_name?.charAt(0)?.toUpperCase()}
-                                                            </div>
-                                                            <div className="min-w-0">
-                                                                <p className="text-sm font-medium truncate" style={{ color: 'var(--gray-900)' }}>
-                                                                    {truncateName(prof?.display_name, 20)}
-                                                                </p>
-                                                                {isPaid && paidTimeText && (
-                                                                    <p className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5" title={`เวลายืนยันชำระเงิน: ${paidTimestamp ? new Date(paidTimestamp).toLocaleString('th-TH') : 'ไม่ระบุ'}`}>
-                                                                        <Icon icon="solar:clock-circle-bold" width={12} className="text-emerald-500 shrink-0" />
-                                                                        จ่ายเมื่อ {paidTimeText}
-                                                                    </p>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:shrink-0 lg:ml-2">
-                                                            {/* Additional Cost Input */}
-                                                            <label className="flex flex-col gap-1 text-[10px] font-semibold text-gray-500">
-                                                                ค่าเพิ่ม
-                                                                <input
-                                                                    type="number"
-                                                                    min={0}
-                                                                    step="0.01"
-                                                                    disabled={isUpdating}
-                                                                    placeholder="0"
-                                                                    defaultValue={ep.additional_cost || ''}
-                                                                    onBlur={async (e) => {
-                                                                        const input = e.currentTarget;
-                                                                        const parsed = Number(e.target.value);
-                                                                        const val = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100) / 100) : 0;
-                                                                        if (val !== (ep.additional_cost || 0)) {
-                                                                            const saved = await updateAdditionalCost(ep, val);
-                                                                            if (!saved) input.value = ep.additional_cost ? String(ep.additional_cost) : '';
-                                                                        }
-                                                                    }}
-                                                                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                                                    className="w-16 text-right text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 focus:outline-none transition-all"
-                                                                    style={{ background: (ep.additional_cost || 0) > 0 ? 'rgba(239,68,68,0.04)' : 'white', color: (ep.additional_cost || 0) > 0 ? '#ef4444' : 'var(--gray-600)' }}
-                                                                    title="ค่าใช้จ่ายเพิ่มเติม (บาท)"
-                                                                />
-                                                            </label>
-
-                                                            {/* Discount Input */}
-                                                            <label className="flex flex-col gap-1 text-[10px] font-semibold text-gray-500">
-                                                                ส่วนลด
-                                                                <input
-                                                                    type="number"
-                                                                    min={0}
-                                                                    step="0.01"
-                                                                    disabled={isUpdating}
-                                                                    placeholder="0"
-                                                                    defaultValue={ep.discount || ''}
-                                                                    onBlur={async (e) => {
-                                                                        const input = e.currentTarget;
-                                                                        const parsed = Number(e.target.value);
-                                                                        const val = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100) / 100) : 0;
-                                                                        if (val !== (ep.discount || 0)) {
-                                                                            const saved = await updateDiscount(ep, val);
-                                                                            if (!saved) input.value = ep.discount ? String(ep.discount) : '';
-                                                                        }
-                                                                    }}
-                                                                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                                                    className="w-16 text-right text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 focus:outline-none transition-all"
-                                                                    style={{ background: hasDiscount ? 'rgba(147,51,234,0.04)' : 'white', color: hasDiscount ? '#7c3aed' : 'var(--gray-600)' }}
-                                                                    title="ส่วนลด (บาท)"
-                                                                />
-                                                            </label>
-
-                                                            {/* Bill Amount */}
-                                                            <div className="text-right min-w-[76px]">
-                                                                <p className="text-[10px] font-semibold text-gray-500 mb-1">ยอดสุทธิ</p>
-                                                                {hasDiscount && (
-                                                                    <p className="text-[10px] line-through text-gray-400">฿{originalBill.toLocaleString()}</p>
-                                                                )}
-                                                                <span className="text-sm font-bold" style={{ color: hasDiscount ? '#7c3aed' : 'var(--gray-700)' }}>
-                                                                    ฿{(userBills[ep.user_id] || 0).toLocaleString()}
-                                                                </span>
-                                                            </div>
-
-                                                            {hasUnfinishedMatches && (
-                                                                <span className="badge badge-warning flex items-center gap-1 shrink-0" title="ยังมีแมตช์ที่ยังไม่กดจบ">
-                                                                    <Icon icon="solar:clock-circle-bold" width={12} /> ยังไม่จบแมตช์
-                                                                </span>
-                                                            )}
-
-                                                            <div className="flex flex-col items-end gap-0.5 shrink-0">
-                                                                <span className={`badge ${isPaid ? 'badge-success' : 'badge-warning'} shrink-0`}>
-                                                                    {isPaid ? (ep.payment_method === 'transfer' ? 'โอนเงิน 📱' : ep.payment_method === 'cash' ? 'เงินสด 💵' : 'จ่ายแล้ว') : 'ยังไม่จ่าย'}
-                                                                </span>
-                                                                {isPaid && paidTimeText && (
-                                                                    <span className="text-[10px] font-semibold text-emerald-700/80 hidden sm:inline-flex items-center gap-0.5" title={`เวลายืนยันชำระเงิน: ${paidTimestamp ? new Date(paidTimestamp).toLocaleString('th-TH') : 'ไม่ระบุ'}`}>
-                                                                        <Icon icon="solar:clock-circle-linear" width={11} /> {paidTimeText}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <button
-                                                                onClick={() => togglePayment(ep)}
-                                                                disabled={isUpdating}
-                                                                className={`btn btn-sm whitespace-nowrap ml-auto lg:ml-0 ${isPaid ? 'btn-outline' : hasUnfinishedMatches ? 'btn-secondary border-amber-300 text-amber-700 hover:bg-amber-50' : 'btn-primary'}`}
-                                                                style={{ minWidth: '96px', padding: '8px 12px' }}
-                                                                title={isPaid ? 'ยกเลิกรายการรับเงิน' : hasUnfinishedMatches ? 'ยังมีแมตช์ค้างอยู่ (กดเพื่อดูรายละเอียด)' : 'บันทึกรับชำระเงิน'}
-                                                            >
-                                                                {isUpdating ? (
-                                                                    <><div className="spinner" style={{ width: 14, height: 14 }} /> บันทึก...</>
-                                                                ) : hasUnfinishedMatches ? (
-                                                                    <><Icon icon="solar:danger-triangle-linear" width={16} className="text-amber-500" /> รับเงิน</>
-                                                                ) : (
-                                                                    <><Icon icon={isPaid ? 'solar:undo-left-linear' : 'solar:check-circle-linear'} width={16} /> {isPaid ? 'ยกเลิกรับเงิน' : 'รับเงิน'}</>
-                                                                )}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-
-                                        {visiblePaymentPlayers.length === 0 && (
-                                                <div className="text-center py-10 bg-gray-50/30">
-                                                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
-                                                        <Icon icon="solar:magnifer-zoom-out-linear" width={24} className="text-gray-400" />
-                                                    </div>
-                                                    <p className="text-sm font-bold text-gray-500">ไม่พบผู้เล่นในตัวกรองนี้</p>
-                                                    <p className="text-[10px] text-gray-400 mt-1">ลองเปลี่ยนสถานะหรือคำค้นหา</p>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => { setPaymentFilter('all'); setPaymentSearchQuery(''); }}
-                                                        className="btn btn-sm btn-secondary mt-4"
-                                                    >
-                                                        ล้างตัวกรอง
-                                                    </button>
-                                                </div>
-                                            )}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        <FinanceSection
+    activeSection={activeSection}
+    players={players}
+    totalBilled={totalBilled}
+    totalCollected={totalCollected}
+    totalOutstanding={totalOutstanding}
+    paidPlayerCount={paidPlayerCount}
+    transferTotal={transferTotal}
+    transferPlayerCount={transferPlayerCount}
+    cashTotal={cashTotal}
+    cashPlayerCount={cashPlayerCount}
+    totalDiscount={totalDiscount}
+    discountedPlayerCount={discountedPlayerCount}
+    totalAdditionalCost={totalAdditionalCost}
+    additionalCostPlayerCount={additionalCostPlayerCount}
+    pendingPlayerCount={pendingPlayerCount}
+    setPaymentFilter={setPaymentFilter}
+    paymentFilter={paymentFilter}
+    visiblePaymentPlayers={visiblePaymentPlayers}
+    setPaymentSortOrder={setPaymentSortOrder}
+    paymentSortOrder={paymentSortOrder}
+    paymentSearchQuery={paymentSearchQuery}
+    setPaymentSearchQuery={setPaymentSearchQuery}
+    updatingPayment={updatingPayment}
+    paymentTimestamps={paymentTimestamps}
+    formatPaymentTime={formatPaymentTime}
+    event={event}
+    matches={matches}
+    updateAdditionalCost={updateAdditionalCost}
+    updateDiscount={updateDiscount}
+    userBills={userBills}
+    togglePayment={togglePayment}
+/>
 
                         {activeSection === 'finance' && players.length === 0 && (
                             <div className="card text-center shadow-sm" style={{ padding: '56px 28px' }}>
@@ -2436,655 +1454,73 @@ export default function MatchMakerPage({ params }: { params: Promise<{ eventId: 
                         )}
 
                         {/* Score Modal — 2-Set + Winner */}
-                        {scoreMatch && typeof document !== 'undefined' && createPortal(
-                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={() => setScoreMatch(null)}>
-                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" />
-                                <div className="card w-full max-w-xl max-h-[92vh] overflow-y-auto animate-in shadow-2xl relative z-10" style={{ padding: '32px 36px' }} onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex items-start justify-between gap-4 mb-7 p-4 rounded-2xl bg-orange-50 border border-orange-100">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-12 h-12 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-sm shrink-0">
-                                                <Icon icon="solar:cup-star-bold-duotone" width={27} />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-black text-xl text-gray-950">บันทึกผลการแข่งขัน</h3>
-                                                <p className="text-xs font-semibold text-orange-700 mt-1">แมตช์ #{scoreMatch.match_number || '-'} · คอร์ท {scoreMatch.court_number || '-'}</p>
-                                            </div>
-                                        </div>
-                                        <button onClick={() => setScoreMatch(null)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-white text-gray-500 hover:text-orange-600 hover:bg-orange-100 transition-colors shadow-sm shrink-0" aria-label="ปิดหน้าต่างบันทึกผล">
-                                            <Icon icon="solar:close-circle-linear" width={20} />
-                                        </button>
-                                    </div>
-
-                                    {/* Result Selector */}
-                                    <div className="flex flex-col gap-4 mb-8">
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <p className="text-sm font-black text-gray-900">เลือกผลการแข่งขัน</p>
-                                                <p className="text-xs text-gray-500 mt-0.5">ตรวจสอบรายชื่อให้ถูกต้องก่อนเลือกทีมชนะ</p>
-                                            </div>
-                                            {winner && <span className="badge badge-warning">เลือกแล้ว</span>}
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <button
-                                                onClick={() => setWinner(winner === 'A' ? null : 'A')}
-                                                aria-pressed={winner === 'A'}
-                                                className="p-5 sm:p-6 rounded-2xl flex flex-col items-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:ring-4 hover:ring-orange-100 active:translate-y-0 active:scale-[0.99] cursor-pointer group min-w-0"
-                                                style={{
-                                                    background: winner === 'A' ? 'var(--orange-500)' : 'white',
-                                                    color: winner === 'A' ? 'white' : 'var(--orange-500)',
-                                                    borderColor: 'var(--orange-500)',
-                                                    transform: winner === 'A' ? 'scale(1.02)' : 'none',
-                                                }}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`p-2 rounded-full transition-colors ${winner === 'A' ? 'bg-white/20' : 'bg-orange-50'}`}>
-                                                        <Icon icon={winner === 'A' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={24} />
-                                                    </div>
-                                                    <span className="font-extrabold text-sm uppercase tracking-tight">ทีม A</span>
-                                                </div>
-                                                <div className="w-full space-y-2">
-                                                    {scoreTeamPlayers('A').map(player => (
-                                                        <div key={player.id} className={`w-full p-2.5 rounded-xl flex items-center gap-2 text-left ${winner === 'A' ? 'bg-white/15 text-white' : 'bg-orange-50 text-gray-800'}`}>
-                                                            <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${winner === 'A' ? 'bg-white/20' : 'bg-white text-orange-600 shadow-sm'}`}>{player.display_name?.charAt(0)?.toUpperCase()}</span>
-                                                            <span className="min-w-0 flex-1">
-                                                                <strong className="block text-xs font-black truncate">{player.display_name}</strong>
-                                                                <small className={`block text-[10px] mt-0.5 ${winner === 'A' ? 'text-white/80' : 'text-gray-500'}`}>มือ {player.skill_level || 'ไม่ระบุ'}</small>
-                                                            </span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <span className={`text-[11px] font-bold ${winner === 'A' ? 'text-white' : 'text-orange-600'}`}>เลือกทีม A ชนะ</span>
-                                            </button>
-
-                                            <button
-                                                onClick={() => setWinner(winner === 'B' ? null : 'B')}
-                                                aria-pressed={winner === 'B'}
-                                                className="p-5 sm:p-6 rounded-2xl flex flex-col items-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:ring-4 hover:ring-blue-100 active:translate-y-0 active:scale-[0.99] cursor-pointer group min-w-0"
-                                                style={{
-                                                    background: winner === 'B' ? '#3b82f6' : 'white',
-                                                    color: winner === 'B' ? 'white' : '#3b82f6',
-                                                    borderColor: '#3b82f6',
-                                                    transform: winner === 'B' ? 'scale(1.02)' : 'none',
-                                                }}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`p-2 rounded-full transition-colors ${winner === 'B' ? 'bg-white/20' : 'bg-blue-50'}`}>
-                                                        <Icon icon={winner === 'B' ? 'solar:cup-star-bold' : 'solar:cup-star-linear'} width={24} />
-                                                    </div>
-                                                    <span className="font-extrabold text-sm uppercase tracking-tight">ทีม B</span>
-                                                </div>
-                                                <div className="w-full space-y-2">
-                                                    {scoreTeamPlayers('B').map(player => (
-                                                        <div key={player.id} className={`w-full p-2.5 rounded-xl flex items-center gap-2 text-left ${winner === 'B' ? 'bg-white/15 text-white' : 'bg-blue-50 text-gray-800'}`}>
-                                                            <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${winner === 'B' ? 'bg-white/20' : 'bg-white text-blue-600 shadow-sm'}`}>{player.display_name?.charAt(0)?.toUpperCase()}</span>
-                                                            <span className="min-w-0 flex-1">
-                                                                <strong className="block text-xs font-black truncate">{player.display_name}</strong>
-                                                                <small className={`block text-[10px] mt-0.5 ${winner === 'B' ? 'text-white/80' : 'text-gray-500'}`}>มือ {player.skill_level || 'ไม่ระบุ'}</small>
-                                                            </span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <span className={`text-[11px] font-bold ${winner === 'B' ? 'text-white' : 'text-blue-600'}`}>เลือกทีม B ชนะ</span>
-                                            </button>
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <button
-                                                onClick={() => setWinner(winner === 'Draw' ? null : 'Draw')}
-                                                aria-pressed={winner === 'Draw'}
-                                                className="p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:ring-4 hover:ring-purple-100 active:translate-y-0 active:scale-[0.99] cursor-pointer"
-                                                style={{
-                                                    background: winner === 'Draw' ? '#9333ea' : 'white',
-                                                    color: winner === 'Draw' ? 'white' : '#9333ea',
-                                                    borderColor: '#9333ea',
-                                                    transform: winner === 'Draw' ? 'scale(1.01)' : 'none',
-                                                }}
-                                            >
-                                                <div className={`p-2 rounded-full ${winner === 'Draw' ? 'bg-white/20' : 'bg-purple-50'}`}>
-                                                    <Icon icon={winner === 'Draw' ? 'solar:hand-shake-bold' : 'solar:hand-shake-linear'} width={20} />
-                                                </div>
-                                                <span className="font-bold text-sm">เสมอ</span>
-                                            </button>
-
-                                            <button
-                                                onClick={() => setWinner(winner === 'None' ? null : 'None')}
-                                                aria-pressed={winner === 'None'}
-                                                className="p-4 rounded-xl flex items-center justify-center gap-3 transition-all duration-200 border-2 shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:ring-4 hover:ring-gray-200 active:translate-y-0 active:scale-[0.99] cursor-pointer"
-                                                style={{
-                                                    background: winner === 'None' ? 'var(--gray-600)' : 'white',
-                                                    color: winner === 'None' ? 'white' : 'var(--gray-600)',
-                                                    borderColor: 'var(--gray-600)',
-                                                    transform: winner === 'None' ? 'scale(1.01)' : 'none',
-                                                }}
-                                            >
-                                                <div className={`p-2 rounded-full ${winner === 'None' ? 'bg-white/20' : 'bg-gray-50'}`}>
-                                                    <Icon icon={winner === 'None' ? 'solar:close-circle-bold' : 'solar:close-circle-linear'} width={20} />
-                                                </div>
-                                                <span className="font-bold text-sm">ไม่แจ้งผล</span>
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <button
-                                        onClick={submitScore}
-                                        disabled={!winner}
-                                        className={`btn w-full min-h-14 rounded-xl text-base sm:text-lg font-black shadow-lg transition-all ${winner
-                                            ? 'btn-primary shadow-orange-200 active:scale-95'
-                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                            }`}
-                                    >
-                                        <Icon icon="solar:check-circle-linear" width={22} />
-                                        บันทึกผลการแข่งขัน
-                                    </button>
-                                </div>
-                            </div>,
-                            document.body
-                        )}
+                        <ScoreModal
+    scoreMatch={scoreMatch}
+    setScoreMatch={setScoreMatch}
+    winner={winner}
+    setWinner={setWinner}
+    scoreTeamPlayers={scoreTeamPlayers}
+    submitScore={submitScore}
+/>
                         {/* Add Shuttlecock Modal */}
-                        {addingShuttlecockMatch && typeof document !== 'undefined' && createPortal(
-                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => !creating && setAddingShuttlecockMatch(null)} />
-                                <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
-                                    <div className="flex items-center gap-3 mb-4">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(249,115,22,0.1)' }}>
-                                            <Icon icon="solar:shuttlecock-linear" width={20} style={{ color: 'var(--orange-500)' }} />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>เบิกลูกแบดเพิ่ม</h3>
-                                            <p className="text-sm" style={{ color: 'var(--gray-500)' }}>ระบุหมายเลขลูกที่เบิก</p>
-                                        </div>
-                                    </div>
-
-                                    <div className="form-group mb-6">
-                                        <input
-                                            autoFocus
-                                            className="form-input"
-                                            placeholder="ตัวอย่าง: 12"
-                                            value={newShuttlecockNumber}
-                                            onChange={(e) => setNewShuttlecockNumber(e.target.value)}
-                                            onKeyDown={(e) => e.key === 'Enter' && submitAddShuttlecock()}
-                                        />
-                                    </div>
-
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setAddingShuttlecockMatch(null)} disabled={creating} className="btn btn-secondary flex-1">ยกเลิก</button>
-                                        <button onClick={submitAddShuttlecock} disabled={creating} className="btn btn-primary flex-1 bg-orange-500 hover:bg-orange-600 border-none text-white">
-                                            {creating ? <div className="spinner" /> : 'ยืนยัน'}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>,
-                            document.body
-                        )}
+                        <PlayerBoardModal
+    open={showPlayerBoard}
+    onClose={() => setShowPlayerBoard(false)}
+    players={players}
+    matches={matches}
+/>
+                        <AddShuttlecockModal
+    addingShuttlecockMatch={addingShuttlecockMatch}
+    creating={creating}
+    setAddingShuttlecockMatch={setAddingShuttlecockMatch}
+    newShuttlecockNumber={newShuttlecockNumber}
+    setNewShuttlecockNumber={setNewShuttlecockNumber}
+    submitAddShuttlecock={submitAddShuttlecock}
+/>
 
                         {/* Add Guest Modal */}
-                        {showAddGuestModal && typeof document !== 'undefined' && createPortal(
-                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => !creating && setShowAddGuestModal(false)} />
-                                <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
-
-                                    <div className="flex items-center gap-3 mb-4">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(147,51,234,0.1)' }}>
-                                            <Icon icon="solar:user-plus-bold" width={20} style={{ color: 'var(--purple-600)' }} />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>เพิ่มขาจร (Guest)</h3>
-                                            <p className="text-sm" style={{ color: 'var(--gray-500)' }}>สำหรับผู้เล่นที่ยังไม่มีบัญชีในระบบ</p>
-                                        </div>
-                                    </div>
-
-                                    <div className="form-group mb-4">
-                                        <label className="text-xs font-bold mb-1.5 block" style={{ color: 'var(--gray-700)' }}>ชื่อแสดงผล <span className="text-red-500">*</span></label>
-                                        <input
-                                            autoFocus
-                                            className="form-input"
-                                            placeholder="กรอกชื่อขาจร..."
-                                            value={guestName}
-                                            onChange={(e) => setGuestName(e.target.value)}
-                                            onKeyDown={(e) => e.key === 'Enter' && handleAddGuest()}
-                                        />
-                                    </div>
-
-                                    <div className="form-group mb-6">
-                                        <CustomSelect
-                                            label="ระดับฝีมือ (ไม่บังคับ)"
-                                            value={guestSkill || ''}
-                                            onChangeAction={(val) => setGuestSkill(val || null)}
-                                            options={GUEST_SKILL_OPTIONS}
-                                            icon="solar:medal-star-bold"
-                                        />
-                                    </div>
-
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setShowAddGuestModal(false)} disabled={creating} className="btn btn-secondary flex-1">ยกเลิก</button>
-                                        <button onClick={handleAddGuest} disabled={creating} className="btn flex-1 bg-purple-600 hover:bg-purple-700 border-none text-white">
-                                            {creating ? <div className="spinner" /> : 'เพิ่มผู้เล่นขาจร'}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>,
-                            document.body
-                        )}
+                        <AddGuestModal
+    showAddGuestModal={showAddGuestModal}
+    creating={creating}
+    setShowAddGuestModal={setShowAddGuestModal}
+    guestName={guestName}
+    setGuestName={setGuestName}
+    handleAddGuest={handleAddGuest}
+    guestSkill={guestSkill}
+    setGuestSkill={setGuestSkill}
+/>
 
                         {/* Add Player Modal */}
-                        {showAddPlayerModal && typeof document !== 'undefined' && createPortal(
-                            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-                                <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-md" onClick={() => setShowAddPlayerModal(false)} />
-                                <div className="card w-full max-w-sm relative z-10 animate-in fade-in zoom-in-95 duration-200" style={{ padding: '24px' }}>
-
-                                    <div className="flex items-center gap-3 mb-4">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(249,115,22,0.1)' }}>
-                                            <Icon icon="solar:users-group-rounded-bold" width={20} style={{ color: 'var(--orange-500)' }} />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg" style={{ color: 'var(--gray-900)' }}>เพิ่มผู้เล่น</h3>
-                                            <p className="text-sm" style={{ color: 'var(--gray-500)' }}>เพิ่มผู้เล่นที่มีบัญชีในระบบลงในก๊วนนี้</p>
-                                        </div>
-                                    </div>
-
-                                    <div className="form-group mb-4">
-                                        <div className="relative">
-                                            <Icon icon="solar:magnifer-linear" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" width={16} />
-                                            <input
-                                                autoFocus
-                                                type="text"
-                                                className="form-input pl-9"
-                                                placeholder="ค้นหาชื่อผู้เล่น..."
-                                                value={newPlayerSearch}
-                                                onChange={(e) => {
-                                                    setNewPlayerSearch(e.target.value);
-                                                    searchUnjoinedPlayers(e.target.value);
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="max-h-60 overflow-y-auto mb-4 border border-gray-100 rounded-xl">
-                                        {searchingPlayers ? (
-                                            <div className="flex justify-center p-4"><div className="spinner border-orange-500 border-t-transparent" /></div>
-                                        ) : unjoinedPlayers.length > 0 ? (
-                                            <div className="divide-y divide-gray-50">
-                                                {unjoinedPlayers.map(p => (
-                                                    <div key={p.id} className="flex items-center justify-between p-3 hover:bg-orange-50/50 transition-colors">
-                                                        <div className="flex items-center gap-2 overflow-hidden">
-                                                            <div className="w-8 h-8 rounded-full bg-gray-100 shrink-0 overflow-hidden flex items-center justify-center border border-gray-200">
-                                                                {p.avatar_url ? (
-                                                                    <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
-                                                                ) : (
-                                                                    <Icon icon="solar:user-bold" className="text-gray-400" width={16} />
-                                                                )}
-                                                            </div>
-                                                            <div className="min-w-0">
-                                                                <p className="text-sm font-medium text-gray-900 truncate">
-                                                                    {truncateName(p.display_name, 20)}
-                                                                </p>
-                                                                {p.skill_level && (
-                                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded text-gray-500 bg-gray-100 border border-gray-200">{p.skill_level}</span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                        <button
-                                                            disabled={addingPlayer === p.id}
-                                                            onClick={() => addSubstitutePlayer(p.id)} // <--- เปลี่ยนเป็นชื่อนี้ครับ
-                                                            className="btn btn-sm bg-orange-500 hover:bg-orange-600 border-none text-white whitespace-nowrap shrink-0 ml-2"
-                                                        >
-                                                            {addingPlayer === p.id ? <div className="spinner" style={{ width: 14, height: 14 }} /> : 'เพิ่ม'}
-                                                        </button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="p-4 text-center text-sm text-gray-500 bg-gray-50">ไม่พบผู้เล่น</div>
-                                        )}
-                                    </div>
-
-                                    <button onClick={() => setShowAddPlayerModal(false)} className="btn btn-secondary w-full">ปิด</button>
-                                </div>
-                            </div>,
-                            document.body
-                        )}
+                        <AddPlayerModal
+    showAddPlayerModal={showAddPlayerModal}
+    setShowAddPlayerModal={setShowAddPlayerModal}
+    newPlayerSearch={newPlayerSearch}
+    setNewPlayerSearch={setNewPlayerSearch}
+    searchUnjoinedPlayers={searchUnjoinedPlayers}
+    searchingPlayers={searchingPlayers}
+    unjoinedPlayers={unjoinedPlayers}
+    addingPlayer={addingPlayer}
+    addSubstitutePlayer={addSubstitutePlayer}
+/>
                     </div > {/* end main content */}
 
-                    {/* Check-in Side Panel (inline) Add back the inactive sections as requested */}
-                    {activeSection === 'matches' && showPlayersSidebar && (
-                        <div className="w-full lg:w-80 xl:w-96 shrink-0">
-                            <div className="card shadow-sm sticky top-4 overflow-hidden" style={{ maxHeight: 'calc(100vh - 100px)' }}>
-                                {/* Header */}
-                                <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--gray-200)', background: 'var(--gray-50)' }}>
-                                    <div className="flex items-center gap-2.5">
-                                        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(249,115,22,0.08)' }}>
-                                            <Icon icon="solar:users-group-rounded-bold" width={18} style={{ color: 'var(--orange-500)' }} />
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-bold" style={{ color: 'var(--gray-900)' }}>รายชื่อผู้เล่น</p>
-                                            <p className="text-[10px]" style={{ color: 'var(--gray-500)' }}>เช็คอินแล้ว {players.filter(p => p.is_checked_in).length}/{players.length} คน</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        <button onClick={() => setShowAddGuestModal(true)} className="px-2 py-1.5 rounded-lg transition-colors bg-white hover:bg-purple-50/50 border border-gray-200 text-[10px] font-black flex items-center gap-1" style={{ color: 'var(--purple-600)' }}>
-                                            <Icon icon="solar:user-plus-bold" width={14} />
-                                            แอดขาจร
-                                        </button>
-                                        <button onClick={() => { setShowAddPlayerModal(true); searchUnjoinedPlayers(''); }} className="px-2 py-1.5 rounded-lg transition-colors bg-white hover:bg-orange-50/50 border border-gray-200 text-[10px] font-black flex items-center gap-1" style={{ color: 'var(--orange-500)' }}>
-                                            <Icon icon="solar:users-group-rounded-bold" width={14} />
-                                            เพิ่ม
-                                        </button>
-                                        <button onClick={() => setShowPlayersSidebar(false)} className="p-1.5 rounded-lg transition-colors hover:bg-gray-100">
-                                            <Icon icon="solar:close-circle-linear" width={20} style={{ color: 'var(--gray-400)' }} />
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Summary badges */}
-                                <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--gray-100)' }}>
-                                    <div className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(249,115,22,0.08)', color: 'var(--orange-500)' }}>
-                                        <Icon icon="solar:check-read-linear" width={10} />
-                                        เช็คอิน {players.filter(p => p.is_checked_in).length}
-                                    </div>
-                                    <div className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>
-                                        <Icon icon="solar:check-circle-bold" width={10} />
-                                        จ่าย {players.filter(p => p.payment_status === 'paid').length}
-                                    </div>
-                                    <div className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>
-                                        <Icon icon="solar:clock-circle-linear" width={10} />
-                                        ค้าง {players.filter(p => p.payment_status === 'pending').length}
-                                    </div>
-                                </div>
-
-                                {/* Player list scroll area */}
-                                <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 250px)' }}>
-
-                                    {/* 1. Checked-in Friends (Regular) */}
-                                    {players.filter(p => p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
-                                        <div className="px-3 py-1.5" style={{ background: 'rgba(249,115,22,0.03)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--orange-500)' }}>เช็คอินแล้ว</p>
-                                        </div>
-                                    )}
-                                    {players.filter(p => p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
-                                        const prof = ep.profiles as unknown as Profile;
-                                        const pstat = playerStats[ep.user_id];
-                                        const isPaid = ep.payment_status === 'paid';
-                                        const isSelected = sidebarTeam === 'A' ? teamA.includes(ep.user_id) : sidebarTeam === 'B' ? teamB.includes(ep.user_id) : false;
-                                        const inOther = (sidebarTeam === 'A' ? teamB : sidebarTeam === 'B' ? teamA : []).includes(ep.user_id);
-                                        const isDisabledSelection = isPaid && !isSelected;
-
-                                        return (
-                                            <div key={ep.id}
-                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group cursor-pointer ${sidebarTeam ? 'hover:bg-opacity-80' : 'hover:bg-gray-50'}`}
-                                                style={{
-                                                    borderBottom: '1px solid var(--gray-50)',
-                                                    background: isSelected ? (sidebarTeam === 'A' ? 'rgba(249,115,22,0.08)' : 'rgba(59,130,246,0.08)') : 'transparent',
-                                                    borderLeft: isSelected ? `3px solid ${sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6'}` : '3px solid transparent'
-                                                }}
-                                                onClick={() => {
-                                                    if (sidebarTeam) {
-                                                        if (!isDisabledSelection) togglePlayer(ep.user_id, sidebarTeam);
-                                                    } else {
-                                                        toggleCheckIn(ep);
-                                                    }
-                                                }}
-                                            >
-                                                <button onClick={(e) => { e.stopPropagation(); toggleCheckIn(ep); }} className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
-                                                    style={{ background: 'var(--orange-500)', color: 'var(--white)' }}>
-                                                    <Icon icon="solar:check-read-linear" width={14} />
-                                                </button>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-orange-600'}`}>
-                                                            {prof?.display_name}
-                                                        </p>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
-                                                            มือ {prof?.skill_level || 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex flex-wrap items-center gap-1.5">
-                                                        <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
-                                                            {pstat?.total || 0} เกม
-                                                        </span>
-                                                        {pstat && pstat.playing && (
-                                                            <span className="text-[9px] font-bold text-orange-500 px-1.5 py-0.5 rounded-md bg-orange-50">กำลังตี</span>
-                                                        )}
-                                                        {inOther && <span className="text-[9px] font-bold text-red-500">อยู่ทีม {sidebarTeam === 'A' ? 'B' : 'A'}</span>}
-                                                    </div>
-                                                </div>
-                                                {isSelected ? (
-                                                    <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
-                                                ) : isPaid ? (
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>จ่ายแล้ว</span>
-                                                ) : (
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>ค้าง</span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* 2. Checked-in Substitutes */}
-                                    {players.filter(p => p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
-                                        <div className="px-3 py-1.5" style={{ background: 'rgba(59,130,246,0.03)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: '#3b82f6' }}>ตัวสำรอง (เช็คอิน)</p>
-                                        </div>
-                                    )}
-                                    {players.filter(p => p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
-                                        const prof = ep.profiles as unknown as Profile;
-                                        const pstat = playerStats[ep.user_id];
-                                        const isPaid = ep.payment_status === 'paid';
-                                        const isSelected = sidebarTeam === 'A' ? teamA.includes(ep.user_id) : sidebarTeam === 'B' ? teamB.includes(ep.user_id) : false;
-                                        const inOther = (sidebarTeam === 'A' ? teamB : sidebarTeam === 'B' ? teamA : []).includes(ep.user_id);
-                                        const isDisabledSelection = isPaid && !isSelected;
-
-                                        return (
-                                            <div key={ep.id}
-                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group cursor-pointer ${sidebarTeam ? 'hover:bg-opacity-80' : 'hover:bg-blue-50/30'}`}
-                                                style={{
-                                                    borderBottom: '1px solid var(--gray-50)',
-                                                    background: isSelected ? (sidebarTeam === 'A' ? 'rgba(249,115,22,0.08)' : 'rgba(59,130,246,0.08)') : 'transparent',
-                                                    borderLeft: isSelected ? `3px solid ${sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6'}` : '3px solid transparent'
-                                                }}
-                                                onClick={() => {
-                                                    if (sidebarTeam) {
-                                                        if (!isDisabledSelection) togglePlayer(ep.user_id, sidebarTeam);
-                                                    } else {
-                                                        toggleCheckIn(ep);
-                                                    }
-                                                }}
-                                            >
-                                                <button onClick={(e) => { e.stopPropagation(); toggleCheckIn(ep); }} className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
-                                                    style={{ background: 'var(--orange-500)', color: 'var(--white)' }}>
-                                                    <Icon icon="solar:check-read-linear" width={14} />
-                                                </button>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-blue-600'}`}>
-                                                            {prof?.display_name}
-                                                        </p>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f620', color: '#3b82f6' }}>สำรอง</span>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
-                                                            มือ {prof?.skill_level || 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex flex-wrap items-center gap-1.5">
-                                                        <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
-                                                            {pstat?.total || 0} เกม
-                                                        </span>
-                                                        {pstat && pstat.playing && (
-                                                            <span className="text-[9px] font-bold text-orange-500 px-1.5 py-0.5 rounded-md bg-orange-50">กำลังตี</span>
-                                                        )}
-                                                        {inOther && <span className="text-[9px] font-bold text-red-500">อยู่ทีม {sidebarTeam === 'A' ? 'B' : 'A'}</span>}
-                                                    </div>
-                                                </div>
-                                                {isSelected ? (
-                                                    <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
-                                                ) : isPaid ? (
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>จ่ายแล้ว</span>
-                                                ) : sidebarTeam ? (
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>ค้าง</span>
-                                                ) : (
-                                                    <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
-                                                        <Icon icon="solar:trash-bin-trash-bold" width={16} />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* 3. Guest Players */}
-                                    {players.filter(p => p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length > 0 && (
-                                        <div className="px-3 py-1.5" style={{ background: 'rgba(147,51,234,0.03)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--purple-600)' }}>ขาจร (แขก)</p>
-                                        </div>
-                                    )}
-                                    {players.filter(p => p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).map(ep => {
-                                        const prof = ep.profiles as unknown as Profile;
-                                        const pstat = playerStats[ep.user_id];
-                                        const isPaid = ep.payment_status === 'paid';
-                                        const isSelected = sidebarTeam === 'A' ? teamA.includes(ep.user_id) : sidebarTeam === 'B' ? teamB.includes(ep.user_id) : false;
-                                        const inOther = (sidebarTeam === 'A' ? teamB : sidebarTeam === 'B' ? teamA : []).includes(ep.user_id);
-                                        const isDisabledSelection = isPaid && !isSelected;
-
-                                        return (
-                                            <div key={ep.id}
-                                                className={`flex items-center gap-2.5 px-3 py-2 transition-all group cursor-pointer ${sidebarTeam ? 'hover:bg-opacity-80' : 'hover:bg-purple-50/30'}`}
-                                                style={{
-                                                    borderBottom: '1px solid var(--gray-50)',
-                                                    background: isSelected ? (sidebarTeam === 'A' ? 'rgba(249,115,22,0.08)' : 'rgba(59,130,246,0.08)') : 'transparent',
-                                                    borderLeft: isSelected ? `3px solid ${sidebarTeam === 'A' ? 'var(--orange-500)' : '#3b82f6'}` : '3px solid transparent'
-                                                }}
-                                                onClick={() => {
-                                                    if (sidebarTeam) {
-                                                        if (!isDisabledSelection) togglePlayer(ep.user_id, sidebarTeam);
-                                                    } else {
-                                                        toggleCheckIn(ep);
-                                                    }
-                                                }}
-                                            >
-                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-purple-100 text-purple-600">
-                                                    <Icon icon="solar:ghost-bold" width={14} />
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className={`text-xs font-bold truncate ${isSelected ? 'text-gray-900' : 'text-gray-900 group-hover:text-purple-600'}`}>
-                                                            {prof?.display_name}
-                                                        </p>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
-                                                            มือ {prof?.skill_level || 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex flex-wrap items-center gap-1.5">
-                                                        <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} />
-                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-600">
-                                                            {pstat?.total || 0} เกม
-                                                        </span>
-                                                        {pstat && pstat.playing && (
-                                                            <span className="text-[9px] font-bold text-orange-500 px-1.5 py-0.5 rounded-md bg-orange-50">กำลังตี</span>
-                                                        )}
-                                                        {inOther && <span className="text-[9px] font-bold text-red-500">อยู่ทีม {sidebarTeam === 'A' ? 'B' : 'A'}</span>}
-                                                    </div>
-                                                </div>
-                                                {isSelected ? (
-                                                    <Icon icon="solar:check-circle-bold" width={16} className={sidebarTeam === 'A' ? 'text-orange-500' : 'text-blue-500'} />
-                                                ) : isPaid ? (
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(22,163,74,0.08)', color: 'var(--success)' }}>จ่ายแล้ว</span>
-                                                ) : sidebarTeam ? (
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,0.08)', color: 'var(--warning)' }}>ค้าง</span>
-                                                ) : (
-                                                    <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
-                                                        <Icon icon="solar:trash-bin-trash-bold" width={16} />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* 3. Not checked-in Friends (Regular) */}
-                                    {players.filter(p => !p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
-                                        <div className="px-3 py-1.5" style={{ background: 'var(--gray-50)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--gray-400)' }}>ยังไม่มา ({players.filter(p => !p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length})</p>
-                                        </div>
-                                    )}
-                                    {players.filter(p => !p.is_checked_in && !p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
-                                        const prof = ep.profiles as unknown as Profile;
-                                        return (
-                                            <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
-                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
-                                                    style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
-                                                            มือ {prof?.skill_level || 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* 4. Not checked-in Substitutes */}
-                                    {players.filter(p => !p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length > 0 && (
-                                        <div className="px-3 py-1.5" style={{ background: 'rgba(59,130,246,0.03)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: '#3b82f6', opacity: 0.5 }}>ตัวสำรอง ({players.filter(p => !p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).length})</p>
-                                        </div>
-                                    )}
-                                    {players.filter(p => !p.is_checked_in && p.is_substitute && !(p.profiles as unknown as Profile)?.is_guest).map(ep => {
-                                        const prof = ep.profiles as unknown as Profile;
-                                        return (
-                                            <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
-                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
-                                                    style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: '#3b82f610', color: '#3b82f6' }}>สำรอง</span>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
-                                                            มือ {prof?.skill_level || 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
-                                                </div>
-                                                <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
-                                                    <Icon icon="solar:trash-bin-trash-bold" width={16} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* 5. Not checked-in Guests */}
-                                    {players.filter(p => !p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length > 0 && (
-                                        <div className="px-3 py-1.5" style={{ background: 'rgba(147,51,234,0.03)' }}>
-                                            <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--purple-600)', opacity: 0.5 }}>ขาจร (แขก) ({players.filter(p => !p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).length})</p>
-                                        </div>
-                                    )}
-                                    {players.filter(p => !p.is_checked_in && (p.profiles as unknown as Profile)?.is_guest).map(ep => {
-                                        const prof = ep.profiles as unknown as Profile;
-                                        return (
-                                            <div key={ep.id} onClick={() => toggleCheckIn(ep)} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-gray-50 cursor-pointer" style={{ borderBottom: '1px solid var(--gray-50)', opacity: 0.6 }}>
-                                                <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors"
-                                                    style={{ background: 'var(--gray-100)', border: '1px solid var(--gray-200)', color: 'var(--gray-400)' }}>
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className="text-xs font-medium truncate" style={{ color: 'var(--gray-500)' }}>{prof?.display_name}</p>
-                                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500">
-                                                            มือ {prof?.skill_level || 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                    <RankBadge mmr={prof?.mmr ?? 1000} size="sm" showName={false} showMMR={false} className="opacity-60" />
-                                                </div>
-                                                <button onClick={(e) => { e.stopPropagation(); handleRemovePlayer(ep.id, prof.display_name); }} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-red-50 text-gray-400 hover:text-red-500 ml-1">
-                                                    <Icon icon="solar:trash-bin-trash-bold" width={16} />
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-                                        )}
+                    {/* Player list popup (เปิดจากปุ่ม "รายชื่อผู้เล่น") */}
+                    <CheckInPanel
+    activeSection={activeSection}
+    showPlayersSidebar={showPlayersSidebar}
+    players={players}
+    setShowAddGuestModal={setShowAddGuestModal}
+    setShowAddPlayerModal={setShowAddPlayerModal}
+    searchUnjoinedPlayers={searchUnjoinedPlayers}
+    setShowPlayersSidebar={setShowPlayersSidebar}
+    playerStats={playerStats}
+    sidebarTeam={sidebarTeam}
+    teamA={teamA}
+    teamB={teamB}
+    togglePlayer={togglePlayer}
+    toggleCheckIn={toggleCheckIn}
+    handleRemovePlayer={handleRemovePlayer}
+/>
                 </div>
             </div>
 
